@@ -1,0 +1,42 @@
+import React, { ReactNode } from 'react';
+import { MapContainer, TileLayer } from 'react-leaflet';
+import L from 'leaflet';
+// Import CSS do Leaflet
+import 'leaflet/dist/leaflet.css';
+// Ícones padrão como módulos ES
+import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
+import iconUrl       from 'leaflet/dist/images/marker-icon.png';
+import shadowUrl     from 'leaflet/dist/images/marker-shadow.png';
+
+// Corrige paths dos ícones padrão
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl,
+  iconUrl,
+  shadowUrl,
+});
+
+interface MapViewProps {
+  children?: ReactNode;
+}
+
+export default function MapView({ children }: MapViewProps) {
+  console.log('Tile URL:', import.meta.env.VITE_MAP_TILE_URL);
+
+  return (
+    <MapContainer
+      center={[-22.7273, -47.6492]}
+      zoom={13}
+      style={{ height: '100%', width: '100%' }}
+    >
+      <TileLayer
+        url={
+          import.meta.env.VITE_MAP_TILE_URL ||
+          'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+        }
+        attribution="&copy; OpenStreetMap contributors"
+      />
+      {children}
+    </MapContainer>
+  );
+}

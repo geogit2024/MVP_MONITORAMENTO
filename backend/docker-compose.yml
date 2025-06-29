@@ -1,0 +1,23 @@
+# backend/Dockerfile
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Copia tudo, inclusive seu JSON de credenciais
+COPY . /app
+
+# Instala as dependências (incluindo earthengine-api)
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn[standard] \
+    google-auth \
+    geojson \
+    requests \
+    earthengine-api
+
+EXPOSE 8000
+
+# Define a variável de ambiente para o EE
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

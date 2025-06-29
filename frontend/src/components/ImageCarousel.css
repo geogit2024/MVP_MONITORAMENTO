@@ -1,0 +1,37 @@
+.image-carousel {
+  display: flex;
+  overflow-x: auto;
+  padding: 8px;
+  gap: 8px;
+}
+
+.thumbnail {
+  position: relative;
+  flex: 0 0 auto;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.thumbnail.selected {
+  border-color: #007bff;
+}
+
+.thumbnail img {
+  display: block;
+  height: 100px;
+  width: auto;
+  border-radius: 2px;
+}
+
+.date-label {
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 2px 4px;
+  border-radius: 2px;
+}

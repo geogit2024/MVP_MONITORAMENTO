@@ -1,0 +1,24 @@
+# docker-compose.yml
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: webgis-backend
+    environment:
+      # E-mail da sua Service Account no GCP
+      SERVICE_ACCOUNT_EMAIL: "gee-service@projetoearthengine.iam.gserviceaccount.com"
+      # Aponta para o JSON montado no container
+      GOOGLE_APPLICATION_CREDENTIALS: "/app/credentials.json"
+    volumes:
+      # Monta o JSON de credenciais no container
+      - ./backend/credentials.json:/app/credentials.json:ro
+    ports:
+      - "8000:8000"
+    networks:
+      - webgis
+
+networks:
+  webgis:
+    driver: bridge

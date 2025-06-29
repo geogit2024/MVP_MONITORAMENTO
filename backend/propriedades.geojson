@@ -1,0 +1,45 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 1,
+        "nome": "Fazenda Boa Esperança",
+        "usuario_email": "usuario1@gmail.com"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-47.8825, -15.7938],
+            [-47.8821, -15.7938],
+            [-47.8821, -15.7935],
+            [-47.8825, -15.7935],
+            [-47.8825, -15.7938]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": 2,
+        "nome": "Sítio Pedra Branca",
+        "usuario_email": "usuario2@gmail.com"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-47.885, -15.794],
+            [-47.8845, -15.794],
+            [-47.8845, -15.7936],
+            [-47.885, -15.7936],
+            [-47.885, -15.794]
+          ]
+        ]
+      }
+    }
+  ]
+}

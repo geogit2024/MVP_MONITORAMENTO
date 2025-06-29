@@ -1,0 +1,15 @@
+# trate todo arquivo de texto de forma automática
+* text=auto
+
+# force EOF LF no repositório para estes tipos
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.json   text eol=lf
+
+
+
+
+
+
+
