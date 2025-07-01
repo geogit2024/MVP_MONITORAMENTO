@@ -11,8 +11,9 @@
   --text-secondary: #6b7280;
   --border-color: #e5e7eb;
   --shadow-color: rgba(0, 0, 0, 0.1);
-  --button-primary-bg: #007bff;
-  --button-secondary-bg: #28a745;
+  --button-primary-bg: #28a745; /* Verde */
+  --button-secondary-bg: #6c757d; /* Cinza */
+  --button-danger-bg: #dc3545; /* Vermelho */
   --button-text-color: #ffffff;
   --button-disabled-bg: #d1d5db;
   --button-disabled-text: #6b7280;
@@ -27,8 +28,9 @@
   --text-secondary: #9ca3af;
   --border-color: #374151;
   --shadow-color: rgba(0, 0, 0, 0.5);
-  --button-primary-bg: #3b82f6;
-  --button-secondary-bg: #16a34a;
+  --button-primary-bg: #16a34a; /* Verde Escuro */
+  --button-secondary-bg: #4b5563; /* Cinza Escuro */
+  --button-danger-bg: #ef4444; /* Vermelho Escuro */
   --button-disabled-bg: #4b5563;
   --button-disabled-text: #9ca3af;
 }
@@ -38,13 +40,31 @@ body, #root {
   background-color: var(--background-primary);
   color: var(--text-primary);
   transition: background-color 0.3s ease, color 0.3s ease;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* ALTERAÇÃO: Fonte 'Inter' aplicada como padrão */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden; /* Impede a rolagem da página inteira */
+}
+
+/* --- LAYOUT PRINCIPAL DA APLICAÇÃO --- */
+.app-container {
+  display: flex;
+  height: 100vh;
+}
+
+.main-content {
+  flex-grow: 1; /* Faz esta área ocupar todo o espaço restante */
+  position: relative; /* Necessário para posicionar outros elementos sobre o mapa */
+  display: flex;
+  flex-direction: column;
 }
 
 /* --- ESTILOS DA SIDEBAR --- */
 .sidebar-container {
-  width: 300px;
+  /* ALTERAÇÃO: Largura aumentada para melhor organização */
+  width: 380px; 
   border-right: 1px solid var(--border-color);
   background-color: var(--background-secondary);
   display: flex;
@@ -78,6 +98,7 @@ body, #root {
 .sidebar-container h2, .sidebar-container h3 {
   color: var(--text-primary);
   margin-top: 0;
+  font-weight: 700;
 }
 
 .sidebar-container label {
@@ -137,21 +158,14 @@ body, #root {
   transition: background-color 0.2s ease, opacity 0.2s ease;
 }
 
-.button-primary {
-  background-color: var(--button-primary-bg);
-  color: var(--button-text-color);
-}
-.button-primary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
+.button-primary { background-color: var(--button-primary-bg); color: var(--button-text-color); }
+.button-primary:hover:not(:disabled) { filter: brightness(1.1); }
 
-.button-secondary {
-  background-color: var(--button-secondary-bg);
-  color: var(--button-text-color);
-}
-.button-secondary:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
+.button-secondary { background-color: var(--button-secondary-bg); color: var(--button-text-color); }
+.button-secondary:hover:not(:disabled) { filter: brightness(1.1); }
+
+.button-danger { background-color: var(--button-danger-bg); color: var(--button-text-color); }
+.button-danger:hover:not(:disabled) { filter: brightness(1.1); }
 
 .button:disabled {
   background-color: var(--button-disabled-bg);
@@ -160,46 +174,49 @@ body, #root {
   filter: none;
 }
 
+/* --- ESTILOS PARA O GRUPO DE CHECKBOXES DE ÍNDICES --- */
+.indices-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 5px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  margin: 5px 0;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  font-size: 0.85rem;
+  cursor: pointer;
+  width: calc(50% - 10px);
+  color: var(--text-secondary);
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  margin-right: 8px;
+  cursor: pointer;
+}
+
 /* --- ESTILOS DO INDICADOR DE PROGRESSO --- */
 .progress-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background-color: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(5px);
   z-index: 9998;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
   color: white;
 }
 
-.progress-overlay p {
-  font-size: 1.25rem;
-  font-weight: 500;
-  margin-top: 1rem;
-  margin-bottom: 0.5rem;
-}
-
-.progress-overlay span {
-  font-size: 1rem;
-  color: #ccc;
-}
-
+.progress-overlay p { font-size: 1.25rem; font-weight: 500; margin-top: 1rem; margin-bottom: 0.5rem; }
+.progress-overlay span { font-size: 1rem; color: #ccc; }
 .progress-spinner {
-  width: 60px;
-  height: 60px;
+  width: 60px; height: 60px;
   border: 5px solid rgba(255, 255, 255, 0.3);
   border-top-color: #ffffff;
   border-radius: 50%;
   animation: spin 1s infinite linear;
 }
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+@keyframes spin { to { transform: rotate(360deg); } }

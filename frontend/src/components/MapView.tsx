@@ -64,7 +64,10 @@ const GeomanDrawControl = ({ onDrawComplete }: { onDrawComplete: (geojson: Featu
         dragMode: false, 
         cutPolygon: false 
     });
-    map.pm.setPathOptions({ color: '#ff7800', fillColor: '#ff7800', fillOpacity: 0.2 });
+    
+    // ALTERAÇÃO 1: Estilo do desenho em andamento (apenas contorno)
+    map.pm.setPathOptions({ color: '#ff7800', fill: false, weight: 3 });
+
     const handleCreate = (e: any) => {
       map.pm.getGeomanLayers().forEach(l => { 
         if (l._leaflet_id !== e.layer._leaflet_id) {
@@ -113,9 +116,10 @@ const BaseMapSelector = ({ onBaseMapChange, activeKey }: { onBaseMapChange: (key
     );
 };
 
+// ALTERAÇÃO 2: Nome da prop alterado de ndviData para indexData
 interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
-  ndviData?: { imageUrl: string; bounds: LatLngBoundsExpression } | null;
+  indexData?: { imageUrl: string; bounds: LatLngBoundsExpression } | null;
   changePolygons?: Feature | null;
   activeAoi?: Feature | null;
   baseMapKey: string;
@@ -125,14 +129,17 @@ interface MapViewProps {
 
 export default function MapView({
   onDrawComplete,
-  ndviData,
+  indexData, // Prop com nome atualizado
   changePolygons,
   activeAoi,
   baseMapKey,
   onBaseMapChange,
   mapViewTarget,
 }: MapViewProps) {
-  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 0.8, fillColor: '#ff7800', fillOpacity: 0.2 };
+
+  // ALTERAÇÃO 3: Estilo da AOI finalizada (apenas contorno)
+  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
+  
   const changePolygonStyle = (feature?: Feature) => ({
     fillColor: feature?.properties?.change_type === 'gain' ? 'green' : 'red',
     color: feature?.properties?.change_type === 'gain' ? 'green' : 'red',
@@ -147,7 +154,8 @@ export default function MapView({
       <BaseMapSelector onBaseMapChange={onBaseMapChange} activeKey={baseMapKey} />
       <GeomanDrawControl onDrawComplete={onDrawComplete} />
       {activeAoi && <GeoJSON data={activeAoi} style={aoiStyle} />}
-      {ndviData && <ImageOverlay url={ndviData.imageUrl} bounds={ndviData.bounds} opacity={0.8} zIndex={10} />}
+      {/* Utiliza a prop com nome atualizado */}
+      {indexData && <ImageOverlay url={indexData.imageUrl} bounds={indexData.bounds} opacity={0.8} zIndex={10} />}
       {changePolygons && <GeoJSON data={changePolygons} style={changePolygonStyle} />}
     </MapContainer>
   );
