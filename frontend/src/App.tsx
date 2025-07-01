@@ -3,23 +3,24 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
-import Sidebar from './components/Sidebar';
+
+// Importa os componentes
+import SidebarTerritorial from './components/Sidebar'; 
+import SidebarClima from './components/SidebarClima'; 
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 
-// --- Interfaces de Tipos ---
+// --- Interfaces, Constantes e Componentes Auxiliares (sem alterações) ---
 export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
 export interface IndexData { imageUrl: string; bounds: LatLngBoundsExpression; }
 interface NotificationProps { message: string; type: 'error' | 'success'; onDismiss: () => void; }
 interface LoadingIndicatorProps { text: string; subtext: string; }
 
-// --- Constantes ---
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SATELLITES = ['LANDSAT_8', 'LANDSAT_9', 'SENTINEL_2A', 'SENTINEL_2B'];
 
-// --- Componentes Auxiliares ---
 const Notification: React.FC<NotificationProps> = ({ message, type, onDismiss }) => {
     if (!message) return null;
     const baseStyle: React.CSSProperties = { position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', padding: '12px 20px', borderRadius: '8px', color: 'white', zIndex: 9999, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontSize: '16px', cursor: 'pointer' };
@@ -30,12 +31,11 @@ const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({ text, subtext }) =>
     <div className="progress-overlay"><div className="progress-spinner"></div><p>{text}</p><span>{subtext}</span></div>
 );
 
-// Declaração para a biblioteca JSZip carregada via script
 declare const JSZip: any;
 
 // --- Componente Principal ---
 export default function App() {
-  // Estados da Aplicação
+  const [activeModule, setActiveModule] = useState<'territorial' | 'clima'>('territorial');
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [dateFrom, setDateFrom] = useState('2025-05-01');
   const [dateTo, setDateTo] = useState('2025-06-30');
@@ -53,11 +53,7 @@ export default function App() {
   const [selectedIndices, setSelectedIndices] = useState<string[]>(['NDVI']);
 
   // --- Funções de Manipulação (Handlers) ---
-
-  const showNotification = useCallback((message: string, type: 'error' | 'success') => {
-    setNotification({ message, type });
-  }, []);
-  
+  const showNotification = useCallback((message: string, type: 'error' | 'success') => { setNotification({ message, type }); }, []);
   const setAoiAndZoom = useCallback((feature: Feature) => {
     if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
       setActiveAoi(feature);
@@ -92,7 +88,6 @@ export default function App() {
   const handleCalculateIndices = useCallback(async () => {
     if (selectedImageIds.length === 0 || !activeAoi) { showNotification("Selecione uma imagem e defina uma AOI.", "error"); return; }
     if (selectedIndices.length === 0) { showNotification("Selecione pelo menos um índice para calcular.", "error"); return; }
-    
     setLoadingState('calculating');
     setChangePolygons(null); 
     try {
@@ -121,7 +116,6 @@ export default function App() {
   const handleDetectChange = useCallback(async () => {
     if (selectedImageIds.length !== 2) { showNotification("Selecione exatamente duas imagens para a detecção de mudança.", "error"); return; }
     if (!activeAoi) { showNotification("Defina uma Área de Interesse (AOI) primeiro.", "error"); return; }
-
     setLoadingState('detectingChange');
     setIndexData(null);
     try {
@@ -143,7 +137,6 @@ export default function App() {
 
   const handleBulkDownload = useCallback(async () => {
     if (selectedImageIds.length === 0 || !activeAoi) { showNotification("Selecione ao menos uma imagem e defina uma AOI.", "error"); return; }
-    
     setLoadingState('downloading');
     try {
       const res = await fetch(`${API_BASE_URL}/api/earth-images/download-bulk`, {
@@ -152,9 +145,7 @@ export default function App() {
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao preparar downloads."); }
       const data = await res.json();
-      data.downloads.forEach((link: { downloadUrl: string }) => {
-        window.open(link.downloadUrl, '_blank');
-      });
+      data.downloads.forEach((link: { downloadUrl: string }) => { window.open(link.downloadUrl, '_blank'); });
       showNotification(`${data.downloads.length} download(s) iniciado(s).`, "success");
     } catch (error: any) {
       showNotification(error.message || "Erro ao iniciar downloads.", "error");
@@ -172,9 +163,7 @@ export default function App() {
         const firstPolygon = geojson.features.find(f => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
         if (firstPolygon) setAoiAndZoom(firstPolygon);
         else showNotification("Nenhum polígono encontrado no arquivo KML.", "error");
-      } catch (e) {
-        showNotification("Erro ao processar o arquivo KML.", "error");
-      }
+      } catch (e) { showNotification("Erro ao processar o arquivo KML.", "error"); }
     };
     if (file.name.toLowerCase().endsWith('.kml')) { file.text().then(processKml); }
     else if (file.name.toLowerCase().endsWith('.kmz')) {
@@ -205,50 +194,73 @@ export default function App() {
     }
   }, [activeAoi, satellite, handleSearchImages]);
 
-
-  // --- Renderização do Componente ---
+  // --- Renderização do Componente com a Estrutura Corrigida ---
   return (
     <div className={`app-container theme-${theme}`}>
       {loadingState !== 'idle' && <LoadingIndicator text="Processando..." subtext="Por favor, aguarde." />}
       {notification && <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />}
       
-      <Sidebar
-        dateFrom={dateFrom} onDateFromChange={setDateFrom}
-        dateTo={dateTo} onDateToChange={setDateTo}
-        cloudPct={cloudPct} onCloudPctChange={setCloudPct}
-        satellite={satellite} onSatelliteChange={setSatellite}
-        satellites={SATELLITES}
-        theme={theme}
-        loadingState={loadingState}
-        selectedImageIds={selectedImageIds}
-        onDetectChange={handleDetectChange}
-        onBulkDownload={handleBulkDownload}
-        onToggleTheme={handleToggleTheme}
-        onAoiFileUpload={handleAoiFileUpload}
-        onDeleteAoi={handleDeleteAoi}
-        onCalculateIndices={handleCalculateIndices}
-        selectedIndices={selectedIndices}
-        onIndexChange={handleIndexChange}
-      />
-      
-      <main className="main-content">
-        <MapView
-          onDrawComplete={handleDrawComplete}
-          indexData={indexData}
-          activeAoi={activeAoi}
-          changePolygons={changePolygons}
-          baseMapKey={baseMapKey}
-          onBaseMapChange={setBaseMapKey}
-          mapViewTarget={mapViewTarget}
-        />
-        {imagesList.length > 0 && (
-          <ImageCarousel
-            images={imagesList}
-            selectedIds={selectedImageIds}
-            onSelect={handleImageSelect}
+      <div className="module-navigation">
+        <button 
+          className={activeModule === 'territorial' ? 'active' : ''}
+          onClick={() => setActiveModule('territorial')}
+        >
+          Monitoramento Territorial
+        </button>
+        <button 
+          className={activeModule === 'clima' ? 'active' : ''}
+          onClick={() => setActiveModule('clima')}
+        >
+          Monitoramento do Clima
+        </button>
+      </div>
+
+      <div className="main-view">
+        {activeModule === 'territorial' ? (
+          <SidebarTerritorial
+            dateFrom={dateFrom} onDateFromChange={setDateFrom}
+            dateTo={dateTo} onDateToChange={setDateTo}
+            cloudPct={cloudPct} onCloudPctChange={setCloudPct}
+            satellite={satellite} onSatelliteChange={setSatellite}
+            satellites={SATELLITES}
+            theme={theme}
+            loadingState={loadingState}
+            selectedImageIds={selectedImageIds}
+            onDetectChange={handleDetectChange}
+            onBulkDownload={handleBulkDownload}
+            onToggleTheme={handleToggleTheme}
+            onAoiFileUpload={handleAoiFileUpload}
+            onDeleteAoi={handleDeleteAoi}
+            onCalculateIndices={handleCalculateIndices}
+            selectedIndices={selectedIndices}
+            onIndexChange={handleIndexChange}
+          />
+        ) : (
+          <SidebarClima
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
           />
         )}
-      </main>
+        
+        <main className="main-content">
+          <MapView
+            onDrawComplete={handleDrawComplete}
+            indexData={indexData}
+            activeAoi={activeAoi}
+            changePolygons={changePolygons}
+            baseMapKey={baseMapKey}
+            onBaseMapChange={setBaseMapKey}
+            mapViewTarget={mapViewTarget}
+          />
+          {activeModule === 'territorial' && imagesList.length > 0 && (
+            <ImageCarousel
+              images={imagesList}
+              selectedIds={selectedImageIds}
+              onSelect={handleImageSelect}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

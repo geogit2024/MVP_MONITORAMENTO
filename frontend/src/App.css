@@ -1,26 +1,7 @@
 /* src/App.css */
 
-/* --- VARIÁVEIS DE TEMA --- */
-
-/* Tema Claro (Padrão) */
+/* --- VARIÁVEIS DE TEMA (TEMA ESCURO COMO PADRÃO) --- */
 :root {
-  --background-primary: #ffffff;
-  --background-secondary: #f9fafb;
-  --background-tertiary: #f3f4f6;
-  --text-primary: #1f2937;
-  --text-secondary: #6b7280;
-  --border-color: #e5e7eb;
-  --shadow-color: rgba(0, 0, 0, 0.1);
-  --button-primary-bg: #28a745; /* Verde */
-  --button-secondary-bg: #6c757d; /* Cinza */
-  --button-danger-bg: #dc3545; /* Vermelho */
-  --button-text-color: #ffffff;
-  --button-disabled-bg: #d1d5db;
-  --button-disabled-text: #6b7280;
-}
-
-/* Tema Escuro */
-.theme-dark {
   --background-primary: #111827;
   --background-secondary: #1f2937;
   --background-tertiary: #374151;
@@ -31,6 +12,7 @@
   --button-primary-bg: #16a34a; /* Verde Escuro */
   --button-secondary-bg: #4b5563; /* Cinza Escuro */
   --button-danger-bg: #ef4444; /* Vermelho Escuro */
+  --button-text-color: #ffffff;
   --button-disabled-bg: #4b5563;
   --button-disabled-text: #9ca3af;
 }
@@ -39,49 +21,90 @@
 body, #root {
   background-color: var(--background-primary);
   color: var(--text-primary);
-  transition: background-color 0.3s ease, color 0.3s ease;
-  /* ALTERAÇÃO: Fonte 'Inter' aplicada como padrão */
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
   height: 100vh;
   width: 100vw;
-  overflow: hidden; /* Impede a rolagem da página inteira */
+  overflow: hidden;
 }
 
-/* --- LAYOUT PRINCIPAL DA APLICAÇÃO --- */
+/* --- LAYOUT PARA NAVEGAÇÃO SUPERIOR --- */
 .app-container {
   display: flex;
+  flex-direction: column; 
   height: 100vh;
 }
 
+.module-navigation {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row; 
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.module-navigation button {
+  /* ALTERAÇÃO ABAIXO: Adicionado flex-grow e text-align */
+  flex-grow: 1;
+  text-align: center;
+  
+  padding: 12px 20px;
+  border: none;
+  border-bottom: 3px solid transparent; 
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.module-navigation button:hover {
+  background-color: var(--background-tertiary);
+  color: var(--text-primary);
+}
+
+.module-navigation button.active {
+  color: var(--button-primary-bg);
+  border-bottom-color: var(--button-primary-bg);
+}
+
+.main-view {
+  display: flex;
+  flex-direction: row; 
+  flex-grow: 1;
+  overflow: hidden; 
+}
+
 .main-content {
-  flex-grow: 1; /* Faz esta área ocupar todo o espaço restante */
-  position: relative; /* Necessário para posicionar outros elementos sobre o mapa */
+  flex-grow: 1;
+  position: relative;
   display: flex;
   flex-direction: column;
 }
 
 /* --- ESTILOS DA SIDEBAR --- */
 .sidebar-container {
-  /* ALTERAÇÃO: Largura aumentada para melhor organização */
   width: 380px; 
   border-right: 1px solid var(--border-color);
   background-color: var(--background-secondary);
   display: flex;
   flex-direction: column;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* ... (O restante do seu CSS para sidebar, botões, etc., continua aqui, sem alterações) ... */
+
+.sidebar-scrollable-content, .sidebar-actions {
+  padding: 1rem 1.5rem;
 }
 
 .sidebar-scrollable-content {
-  padding: 1rem 1.5rem;
   flex: 1 1 auto;
   overflow-y: auto;
 }
 
 .sidebar-actions {
-  padding: 1rem 1.5rem;
   border-top: 1px solid var(--border-color);
-  background-color: var(--background-secondary);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -95,7 +118,7 @@ body, #root {
   margin-bottom: 2rem;
 }
 
-.sidebar-container h2, .sidebar-container h3 {
+.sidebar-container h2, .sidebar-container h3, .filter-group legend {
   color: var(--text-primary);
   margin-top: 0;
   font-weight: 700;
@@ -118,7 +141,7 @@ body, #root {
   background-color: var(--background-primary);
   color: var(--text-primary);
   font-size: 1rem;
-  box-sizing: border-box; /* Garante que padding não afete a largura total */
+  box-sizing: border-box;
 }
 
 .sidebar-divider {
@@ -127,26 +150,6 @@ body, #root {
   margin: 1.5rem 0;
 }
 
-.theme-toggle-button {
-  background: none;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  cursor: pointer;
-  font-size: 20px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  transition: background-color 0.2s, color 0.2s;
-}
-
-.theme-toggle-button:hover {
-  background-color: var(--background-tertiary);
-}
-
-/* --- ESTILOS DOS BOTÕES --- */
 .button {
   width: 100%;
   padding: 0.75rem;
@@ -174,7 +177,6 @@ body, #root {
   filter: none;
 }
 
-/* --- ESTILOS PARA O GRUPO DE CHECKBOXES DE ÍNDICES --- */
 .indices-checkbox-group {
   display: flex;
   flex-wrap: wrap;
@@ -200,7 +202,6 @@ body, #root {
   cursor: pointer;
 }
 
-/* --- ESTILOS DO INDICADOR DE PROGRESSO --- */
 .progress-overlay {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background-color: rgba(0, 0, 0, 0.6);

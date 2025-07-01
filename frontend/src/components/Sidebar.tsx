@@ -40,16 +40,26 @@ export default function Sidebar({
   return (
     <aside className="sidebar-container">
       <div className="sidebar-header">
-        <div className="title-container">
-          {/* ALTERAÇÃO APLICADA AQUI */}
-          <h2>MONITORAMENTO TERRITORIAL</h2>
-        </div>
+        {/* O TÍTULO FOI REMOVIDO. O BOTÃO DE TEMA AGORA É O ÚNICO ELEMENTO. */}
         <button onClick={onToggleTheme} title="Alternar Tema" className="theme-toggle-button">
           {theme === 'light' ? '🌙' : '☀️'}
         </button>
       </div>
 
       <div className="sidebar-content">
+        <fieldset disabled={isProcessing} className="filter-group">
+          <legend>Área de Interesse (AOI)</legend>
+          <label>Carregar KML/KMZ:
+            <input type="file" accept=".kml,.kmz" onChange={e => {
+                onAoiFileUpload(e.target.files ? e.target.files[0] : null);
+                e.target.value = '';
+            }}/>
+          </label>
+          <button onClick={onDeleteAoi} disabled={isProcessing} className="button button-danger">Deletar AOI</button>
+        </fieldset>
+
+        <hr className="sidebar-divider"/>
+
         <fieldset disabled={isProcessing} className="filter-group">
           <legend>Filtros de Busca</legend>
           <label>Data Inicial: <input type="date" value={dateFrom} onChange={e => onDateFromChange(e.target.value)} /></label>
@@ -63,19 +73,6 @@ export default function Sidebar({
           </label>
         </fieldset>
         
-        <hr className="sidebar-divider"/>
-
-        <fieldset disabled={isProcessing} className="filter-group">
-          <legend>Área de Interesse (AOI)</legend>
-          <label>Carregar KML/KMZ:
-            <input type="file" accept=".kml,.kmz" onChange={e => {
-                onAoiFileUpload(e.target.files ? e.target.files[0] : null);
-                e.target.value = '';
-            }}/>
-          </label>
-          <button onClick={onDeleteAoi} disabled={isProcessing} className="button button-danger">Deletar AOI</button>
-        </fieldset>
-
         <hr className="sidebar-divider"/>
 
         <fieldset disabled={isProcessing} className="filter-group">
