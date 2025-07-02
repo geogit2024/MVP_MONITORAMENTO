@@ -5,14 +5,15 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  /* ALTERAÇÃO: Largura aumentada para acomodar melhor os controles */
-  width: 420px; 
+  width: 480px; /* Largura aumentada */
+  min-width: 300px;
+  max-width: 100%;
   background-color: var(--background-secondary);
   color: var(--text-primary);
   box-shadow: 2px 0 5px var(--shadow-color);
 }
 
-/* --- Cabeçalho Ajustado --- */
+/* --- Cabeçalho --- */
 .sidebar-header {
   flex-shrink: 0;
   display: flex;
@@ -20,7 +21,7 @@
   align-items: center;
   padding: 15px;
   border-bottom: 1px solid var(--border-color);
-  height: 42px; 
+  height: 42px;
 }
 
 .theme-toggle-button {
@@ -39,17 +40,16 @@
   padding: 15px;
 }
 
-/* --- Estilos dos Grupos de Filtros e Ações --- */
+/* --- Estilos dos Grupos de Filtros --- */
 .filter-group {
   border: 1px solid var(--border-color);
   border-radius: 5px;
   padding: 15px;
-  margin: 0;
-  margin-bottom: 20px; /* Adicionado espaço entre os grupos */
+  margin-bottom: 20px;
 }
 
 .filter-group:last-of-type {
-    margin-bottom: 0;
+  margin-bottom: 0;
 }
 
 .filter-group legend {
@@ -79,6 +79,7 @@
   box-sizing: border-box;
 }
 
+/* --- Botões e Ações --- */
 .action-group {
   display: flex;
   flex-direction: column;
@@ -91,7 +92,6 @@
   margin: 20px 0;
 }
 
-/* --- Botões --- */
 .button {
   width: 100%;
   padding: 10px 15px;
@@ -99,16 +99,15 @@
   border-radius: 5px;
   cursor: pointer;
   font-weight: bold;
-  transition: filter 0.2s; /* ALTERAÇÃO: Transição de filtro */
+  transition: filter 0.2s;
 }
 
-/* ALTERAÇÃO: Adicionado efeito de hover para melhor feedback */
 .button:not(:disabled):hover {
   filter: brightness(1.15);
 }
 
 .button:disabled {
-  filter: brightness(0.6); /* Efeito mais claro que opacity */
+  filter: brightness(0.6);
   cursor: not-allowed;
 }
 
@@ -116,11 +115,11 @@
 .button-secondary { background-color: var(--button-secondary-bg); color: var(--button-text-color); }
 .button-danger { background-color: var(--button-danger-bg); color: var(--button-text-color); }
 
-/* --- ALTERAÇÃO: Grupo de Checkboxes refatorado com CSS Grid --- */
+/* --- Checkboxes com Grid --- */
 .indices-checkbox-group {
   display: grid;
-  grid-template-columns: 1fr 1fr; /* Duas colunas de tamanho igual */
-  gap: 10px 20px; /* Espaçamento vertical e horizontal */
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 20px;
   padding: 10px;
   border: 1px solid var(--border-color);
   border-radius: 5px;
@@ -130,14 +129,23 @@
 .checkbox-label {
   display: flex;
   align-items: center;
-  font-size: 0.9rem; /* Leve aumento para melhor legibilidade */
+  font-size: 0.9rem;
   cursor: pointer;
-  /* A propriedade 'width' não é mais necessária com Grid, o que torna o código mais limpo */
-  margin-bottom: 0;
 }
 
 .checkbox-label input[type="checkbox"] {
   width: auto;
   margin-right: 8px;
   cursor: pointer;
+}
+
+/* --- Responsividade opcional --- */
+@media (max-width: 768px) {
+  .sidebar-container {
+    width: 100%;
+    height: auto;
+    max-height: 100vh;
+    position: absolute;
+    z-index: 1000;
+  }
 }

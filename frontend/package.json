@@ -13,6 +13,7 @@
     "@geoman-io/leaflet-geoman-free": "^2.18.3",
     "@mapbox/togeojson": "^0.16.2",
     "axios": "^1.9.0",
+    "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
     "react": "^19.1.0",
