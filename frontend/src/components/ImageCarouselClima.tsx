@@ -1,33 +1,38 @@
-// Caminho: src/components/ImageCarousel.tsx
+// src/components/ImageCarousel.tsx
 
 import React from 'react';
-import './ImageCarousel.css';
-
-export interface ImageInfo {
-  id: string;
-  date: string;
-  thumbnailUrl: string;
-}
+import { ImageInfo } from '../App'; // Importa a interface
+import './ImageCarousel.css'; // Ficheiro de estilos para o carrossel
 
 interface ImageCarouselProps {
   images: ImageInfo[];
   selectedIds: string[];
   onSelect: (id: string) => void;
+  // ✅ NOVO: Prop para receber a ID da camada de resultado quando estiver visível
+  activeLayerId: string | null;
 }
 
-const ImageCarousel: React.FC<ImageCarouselProps> = ({ images, selectedIds, onSelect }) => {
+const ImageCarousel: React.FC<ImageCarouselProps> = ({ images, selectedIds, onSelect, activeLayerId }) => {
   return (
-    <div className="image-carousel">
-      {images.map((img) => (
-        <div
-          key={img.id}
-          className={`thumbnail ${selectedIds.includes(img.id) ? 'selected' : ''}`}
-          onClick={() => onSelect(img.id)}
-        >
-          <img src={img.thumbnailUrl} alt={img.date} />
-          <div className="date-label">{img.date}</div>
-        </div>
-      ))}
+    <div className="carousel-container">
+      <div className="carousel-track">
+        {images.map(image => {
+          // ✅ REVISÃO: Uma imagem é considerada "ativa" se estiver na lista de selecionadas
+          // OU se for a nossa camada de resultado visível.
+          const isActive = selectedIds.includes(image.id) || activeLayerId === image.id;
+          
+          return (
+            <div
+              key={image.id}
+              className={`carousel-item ${isActive ? 'selected' : ''}`}
+              onClick={() => onSelect(image.id)}
+            >
+              <img src={image.thumbnailUrl} alt={image.date} className="carousel-thumbnail" />
+              <div className="carousel-item-caption">{image.date}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

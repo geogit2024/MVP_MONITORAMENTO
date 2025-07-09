@@ -120,8 +120,6 @@ const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { ur
     return null;
 };
 
-
-// ✅ REVISÃO: Interface de props atualizada para incluir todas as camadas dinâmicas
 interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
   visibleLayerUrl: string | null;
@@ -131,10 +129,9 @@ interface MapViewProps {
   baseMapKey: string;
   onBaseMapChange: (key: string) => void;
   mapViewTarget: LatLngBoundsExpression | null;
-  differenceLayerUrl: string | null; // <-- Nova prop para o "mapa de calor" da mudança
+  differenceLayerUrl: string | null;
 }
 
-// ✅ REVISÃO: Componente principal MapView atualizado
 export default function MapView({
   onDrawComplete,
   visibleLayerUrl,
@@ -144,18 +141,37 @@ export default function MapView({
   baseMapKey,
   onBaseMapChange,
   mapViewTarget,
-  differenceLayerUrl, // <-- Nova prop
+  differenceLayerUrl,
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
 
   const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
-  const changePolygonStyle = (feature?: Feature) => ({
-    fillColor: feature?.properties?.change_type === 1 ? 'green' : 'red', // GEE retorna 1 para ganho, -1 para perda
-    color: feature?.properties?.change_type === 1 ? 'darkgreen' : 'darkred',
-    weight: 1,
-    fillOpacity: 0.6
-  });
+  
+  // ✅ ATUALIZAÇÃO: Lógica de cores ajustada para os novos rótulos do backend
+  const changePolygonStyle = (feature?: Feature) => {
+    const type = parseInt(String(feature?.properties?.change_type), 10);
+
+    if (type === 2) { // 2 = Ganho (Acréscimo de vegetação)
+      return {
+        fillColor: '#00ff00',
+        color: '#006400',
+        weight: 1.5,
+        fillOpacity: 0.7
+      };
+    } else if (type === 1) { // 1 = Perda (Supressão de vegetação)
+      return {
+        fillColor: '#ff0000',
+        color: '#8b0000',
+        weight: 1.5,
+        fillOpacity: 0.7
+      };
+    }
+    
+    // Estilo padrão para qualquer outro caso
+    return { color: '#808080', weight: 1, fillOpacity: 0.5 };
+  };
+
   const activeBaseMap = baseMaps[baseMapKey as keyof typeof baseMaps] || baseMaps.osm;
 
   return (
@@ -170,7 +186,7 @@ export default function MapView({
         <DynamicTileLayer url={visibleLayerUrl} zIndex={10} attribution="Índice Calculado" />
         <DynamicTileLayer url={previewLayerUrl} zIndex={11} attribution="Pré-visualização" />
         
-        {/* ✅ REVISÃO: Camadas de Detecção de Mudança */}
+        {/* Camadas de Detecção de Mudança */}
         <DynamicTileLayer url={differenceLayerUrl} zIndex={12} opacity={0.7} attribution="Diferença NDVI" />
         {changePolygons && <GeoJSON data={changePolygons} style={changePolygonStyle} />}
         
@@ -179,44 +195,14 @@ export default function MapView({
         <PrecipitationLayer visible={showPrecipitation} />
       </MapContainer>
 
-      {/* Botão FIRMS */}
-      <div style={{
-        position: 'absolute',
-        bottom: '20px',
-        left: '10px',
-        zIndex: 1001,
-        backgroundColor: '#333',
-        color: '#fff',
-        padding: '10px 14px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-        fontWeight: 600,
-        fontSize: '14px',
-        cursor: 'pointer',
-        userSelect: 'none',
-        border: '2px solid #555',
-      }} onClick={() => setShowFirmsPoints(p => !p)}>
-        {showFirmsPoints ? 'Ocultar Pontos FIRMS' : 'Mostrar Pontos FIRMS'}
-      </div>
-
-      {/* Botão Precipitação */}
-      <div style={{
-        position: 'absolute',
-        bottom: '70px',
-        left: '10px',
-        zIndex: 1001,
-        backgroundColor: '#0044cc',
-        color: '#fff',
-        padding: '10px 14px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-        fontWeight: 600,
-        fontSize: '14px',
-        cursor: 'pointer',
-        userSelect: 'none',
-        border: '2px solid #003399',
-      }} onClick={() => setShowPrecipitation(p => !p)}>
-        {showPrecipitation ? 'Ocultar Precipitação' : 'Mostrar Precipitação'}
+      {/* Botões de camadas adicionais */}
+      <div style={{ position: 'absolute', bottom: '20px', left: '10px', zIndex: 1001, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <button className="map-layer-button firms" onClick={() => setShowFirmsPoints(p => !p)}>
+          {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
+        </button>
+        <button className="map-layer-button precipitation" onClick={() => setShowPrecipitation(p => !p)}>
+          {showPrecipitation ? 'Ocultar Precipitação' : 'Mostrar Precipitação'}
+        </button>
       </div>
     </div>
   );

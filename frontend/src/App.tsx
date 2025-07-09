@@ -22,6 +22,10 @@ interface LoadingIndicatorProps { text: string; subtext: string; }
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SATELLITES = ['LANDSAT_8', 'LANDSAT_9', 'SENTINEL_2A', 'SENTINEL_2B'];
 
+const CHANGE_LAYER_ID = 'change-detection-result';
+const CHANGE_LAYER_ICON_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 2 7 12 12 22 7 12 2'%3E%3C/polygon%3E%3Cpolyline points='2 17 12 22 22 17'%3E%3C/polyline%3E%3Cpolyline points='2 12 12 17 22 12'%3E%3C/polyline%3E%3C/svg%3E";
+const INDEX_LAYER_ICON_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='3' y1='9' x2='21' y2='9'%3E%3C/line%3E%3Cline x1='9' y1='21' x2='9' y2='9'%3E%3C/line%3E%3C/svg%3E";
+
 const Notification: React.FC<NotificationProps> = ({ message, type, onDismiss }) => {
     if (!message) return null;
     const baseStyle: React.CSSProperties = { position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', padding: '12px 20px', borderRadius: '8px', color: 'white', zIndex: 9999, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', fontSize: '16px', cursor: 'pointer' };
@@ -42,7 +46,8 @@ export default function App() {
   const [dateTo, setDateTo] = useState('2025-06-30');
   const [cloudPct, setCloudPct] = useState(30);
   const [satellite, setSatellite] = useState('');
-  const [imagesList, setImagesList] = useState<ImageInfo[]>([]);
+  const [apiImages, setApiImages] = useState<ImageInfo[]>([]);
+  const [carouselItems, setCarouselItems] = useState<ImageInfo[]>([]);
   const [loadingState, setLoadingState] = useState<'idle' | 'searching' | 'calculating' | 'detectingChange' | 'downloading' | 'loading_preview'>('idle');
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [activeAoi, setActiveAoi] = useState<Feature | null>(null);
@@ -56,8 +61,23 @@ export default function App() {
   const [selectedIndices, setSelectedIndices] = useState<string[]>(['NDVI']);
   const [changeThreshold, setChangeThreshold] = useState(0.25);
   const [differenceLayerUrl, setDifferenceLayerUrl] = useState<string | null>(null);
+  const [isChangeLayerVisible, setIsChangeLayerVisible] = useState(false);
 
-  // --- Funções de Manipulação (Handlers) ---
+  useEffect(() => {
+    const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({
+      id: `index-${index.indexName}`,
+      date: index.indexName,
+      thumbnailUrl: INDEX_LAYER_ICON_URI,
+    }));
+    const virtualChangeItem: ImageInfo[] = changePolygons ? [{
+      id: CHANGE_LAYER_ID,
+      date: 'Detecção de Mudança',
+      thumbnailUrl: CHANGE_LAYER_ICON_URI,
+    }] : [];
+    const items = [...virtualChangeItem, ...virtualIndexItems, ...apiImages];
+    setCarouselItems(items);
+  }, [apiImages, changePolygons, calculatedIndices]);
+
   const showNotification = useCallback((message: string, type: 'error' | 'success') => { setNotification({ message, type }); }, []);
   
   const resetAnalysisLayers = useCallback(() => {
@@ -66,6 +86,7 @@ export default function App() {
     setChangePolygons(null);
     setPreviewLayerUrl(null);
     setDifferenceLayerUrl(null);
+    setIsChangeLayerVisible(false);
   }, []);
 
   const setAoiAndZoom = useCallback((feature: Feature) => {
@@ -89,22 +110,23 @@ export default function App() {
     if (new Date(dateFrom) > new Date(dateTo)) { showNotification('A Data Inicial não pode ser posterior à Data Final.', 'error'); return; }
     if (!satellite) { showNotification('Selecione um satélite.', 'error'); return; }
     setLoadingState('searching');
-    setImagesList([]); setSelectedImageIds([]); resetAnalysisLayers();
+    setSelectedImageIds([]); 
+    resetAnalysisLayers();
     try {
       const resp = await fetch(`${API_BASE_URL}/api/earth-images/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dateFrom, dateTo, cloudPct, satellite, polygon: geometry }) });
       if (!resp.ok) { const err = await resp.json(); throw new Error(err.detail || 'Erro no servidor'); }
       const data = await resp.json() as ImageInfo[];
-      setImagesList(data);
+      setApiImages(data);
       showNotification(data.length > 0 ? `${data.length} imagens encontradas.` : `Nenhuma imagem encontrada.`, data.length > 0 ? 'success' : 'error');
     } catch (err: any) {
+      setApiImages([]);
       showNotification(err.message || 'Erro ao buscar imagens.', 'error');
     } finally {
       setLoadingState('idle');
     }
   }, [dateFrom, dateTo, cloudPct, satellite, showNotification, resetAnalysisLayers]);
 
-  // ... (outras funções como handleIndexChange, handleCalculateIndices, handlePreviewImage permanecem as mesmas)
-    const handleIndexChange = useCallback((indexName: string, isChecked: boolean) => {
+  const handleIndexChange = useCallback((indexName: string, isChecked: boolean) => {
     setSelectedIndices(prev => isChecked ? [...new Set([...prev, indexName])] : prev.filter(i => i !== indexName));
   }, []);
 
@@ -112,7 +134,10 @@ export default function App() {
     if (selectedImageIds.length === 0 || !activeAoi) { showNotification("Selecione uma imagem e defina uma AOI.", "error"); return; }
     if (selectedIndices.length === 0) { showNotification("Selecione pelo menos um índice para calcular.", "error"); return; }
     setLoadingState('calculating');
-    resetAnalysisLayers();
+    
+    setCalculatedIndices([]);
+    setVisibleLayerUrl(null);
+
     try {
       const imageId = selectedImageIds[0];
       const res = await fetch(`${API_BASE_URL}/api/earth-images/indices`, {
@@ -134,12 +159,13 @@ export default function App() {
     } finally {
       setLoadingState('idle');
     }
-  }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification, resetAnalysisLayers]);
+  }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification]);
 
   const handlePreviewImage = useCallback(async (imageId: string) => {
     if (!activeAoi || !satellite) { showNotification("Defina uma AOI e selecione um satélite primeiro.", "error"); return; }
     setLoadingState('loading_preview');
-    resetAnalysisLayers();
+    setVisibleLayerUrl(null);
+    setDifferenceLayerUrl(null);
     try {
       const res = await fetch(`${API_BASE_URL}/api/earth-images/preview`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -153,16 +179,19 @@ export default function App() {
     } finally {
       setLoadingState('idle');
     }
-  }, [activeAoi, satellite, showNotification, resetAnalysisLayers]);
+  }, [activeAoi, satellite, showNotification]);
 
   const handleDetectChange = useCallback(async () => {
     if (selectedImageIds.length !== 2) { showNotification("Selecione exatamente duas imagens para a detecção de mudança.", "error"); return; }
     if (!activeAoi) { showNotification("Defina uma Área de Interesse (AOI) primeiro.", "error"); return; }
     setLoadingState('detectingChange');
-    resetAnalysisLayers();
+
+    setChangePolygons(null);
+    setIsChangeLayerVisible(false);
+    setDifferenceLayerUrl(null);
+
     try {
-      const parseDate = (dateStr: string) => { const [day, month, year] = dateStr.split('/'); return new Date(`${year}-${month}-${day}`); };
-      const imageDateMap = new Map(imagesList.map(img => [img.id, parseDate(img.date)]));
+      const imageDateMap = new Map(apiImages.map(img => [img.id, new Date(img.date.split('/').reverse().join('-'))]));
       const sortedSelectedIds = [...selectedImageIds].sort((a, b) => (imageDateMap.get(a)?.getTime() || 0) - (imageDateMap.get(b)?.getTime() || 0));
       const res = await fetch(`${API_BASE_URL}/api/earth-images/change-detection`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -176,16 +205,17 @@ export default function App() {
       if (data.differenceImageUrl) { setDifferenceLayerUrl(data.differenceImageUrl); }
       if (data.changeGeoJson && data.changeGeoJson.features.length > 0) {
         setChangePolygons(data.changeGeoJson);
+        setIsChangeLayerVisible(true);
         showNotification("Detecção de mudança concluída!", "success");
       } else {
-        showNotification("Nenhuma mudança significativa foi detectada com a sensibilidade atual.", "error");
+        showNotification("Nenhuma mudança significativa foi detectada.", "error");
       }
     } catch (error: any) {
       showNotification(error.message || "Ocorreu um erro ao detectar as mudanças.", "error");
     } finally {
       setLoadingState('idle');
     }
-  }, [activeAoi, imagesList, selectedImageIds, satellite, showNotification, resetAnalysisLayers, changeThreshold]);
+  }, [selectedImageIds, activeAoi, satellite, apiImages, changeThreshold, showNotification]);
 
   const handleBulkDownload = useCallback(async () => {
     if (selectedImageIds.length === 0 || !activeAoi) { showNotification("Selecione pelo menos uma imagem e defina uma AOI.", "error"); return; }
@@ -222,39 +252,28 @@ export default function App() {
       setLoadingState('idle');
     }
   }, [selectedImageIds, activeAoi, showNotification]);
-
-  // ✅ CORREÇÃO: Função de upload de KML/KMZ totalmente implementada
+  
   const handleAoiFileUpload = useCallback(async (file: File | null) => {
     if (!file) return;
-
-    setLoadingState('searching'); // Reutiliza um estado de loading
+    setLoadingState('searching'); 
     try {
       let kmlText = '';
-      // Se for KMZ, descompacta primeiro
       if (file.name.toLowerCase().endsWith('.kmz')) {
         const zip = await JSZip.loadAsync(file);
-        // Encontra o primeiro arquivo .kml dentro do zip
         const kmlFile = zip.file(/\.kml$/i)[0];
         if (!kmlFile) {
           throw new Error('Nenhum arquivo .kml encontrado dentro do KMZ.');
         }
         kmlText = await kmlFile.async('string');
       } else {
-        // Se for KML, apenas lê como texto
         kmlText = await file.text();
       }
-
-      // Converte o texto KML para um DOM XML e depois para GeoJSON
       const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
       const geojson = togeojson.kml(dom) as FeatureCollection;
-
-      // Procura pelo primeiro polígono válido no GeoJSON
       const polygonFeature = geojson.features.find(
         (f): f is Feature => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
       );
-
       if (polygonFeature) {
-        // Se encontrou, define a AOI e dá zoom
         setAoiAndZoom(polygonFeature);
       } else {
         showNotification('Nenhum polígono válido foi encontrado no arquivo KML.', 'error');
@@ -268,8 +287,22 @@ export default function App() {
   }, [showNotification, setAoiAndZoom]);
 
   const handleDrawComplete = useCallback((feature: Feature) => setAoiAndZoom(feature), [setAoiAndZoom]);
-  const handleImageSelect = useCallback((id: string) => setSelectedImageIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]), []);
-  const handleDeleteAoi = useCallback(() => { setActiveAoi(null); setImagesList([]); setSelectedImageIds([]); resetAnalysisLayers(); }, [resetAnalysisLayers]);
+  
+  const handleCarouselSelect = useCallback((id: string) => {
+    if (id === CHANGE_LAYER_ID) {
+      setIsChangeLayerVisible(prev => !prev);
+    } else if (id.startsWith('index-')) {
+      const indexName = id.replace('index-', '');
+      const selectedIndex = calculatedIndices.find(i => i.indexName === indexName);
+      if (selectedIndex) {
+        setVisibleLayerUrl(prevUrl => prevUrl === selectedIndex.imageUrl ? null : selectedIndex.imageUrl);
+      }
+    } else {
+      setSelectedImageIds(ids => ids.includes(id) ? ids.filter(i => i !== id) : [...ids, id]);
+    }
+  }, [calculatedIndices]);
+
+  const handleDeleteAoi = useCallback(() => { setActiveAoi(null); setApiImages([]); setSelectedImageIds([]); resetAnalysisLayers(); }, [resetAnalysisLayers]);
   const handleToggleTheme = useCallback(() => setTheme(t => t === 'light' ? 'dark' : 'light'), []);
 
   useEffect(() => {
@@ -277,8 +310,20 @@ export default function App() {
   }, [notification]);
 
   useEffect(() => {
-    if (activeAoi && satellite) { handleSearchImages(activeAoi.geometry); }
-  }, [activeAoi, satellite, handleSearchImages]);
+    if (activeAoi && satellite) {
+      handleSearchImages(activeAoi.geometry);
+    }
+  }, [activeAoi, satellite]);
+
+  let activeLayerId = null;
+  if (isChangeLayerVisible) {
+    activeLayerId = CHANGE_LAYER_ID;
+  } else if (visibleLayerUrl) {
+    const activeIndex = calculatedIndices.find(i => i.imageUrl === visibleLayerUrl);
+    if (activeIndex) {
+      activeLayerId = `index-${activeIndex.indexName}`;
+    }
+  }
 
   return (
     <div className={`app-container theme-${theme}`}>
@@ -304,6 +349,7 @@ export default function App() {
             calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
             changeThreshold={changeThreshold}
             onChangeThreshold={setChangeThreshold}
+            changesGeoJson={changePolygons}
           />
         ) : (
           <SidebarClima theme={theme} onToggleTheme={handleToggleTheme}/>
@@ -314,18 +360,19 @@ export default function App() {
             visibleLayerUrl={visibleLayerUrl}
             previewLayerUrl={previewLayerUrl}
             activeAoi={activeAoi}
-            changePolygons={changePolygons}
+            changePolygons={isChangeLayerVisible ? changePolygons : null}
             baseMapKey={baseMapKey}
             onBaseMapChange={setBaseMapKey}
             mapViewTarget={mapViewTarget}
             differenceLayerUrl={differenceLayerUrl}
           />
-          {activeModule === 'territorial' && imagesList.length > 0 && (
+          {activeModule === 'territorial' && carouselItems.length > 0 && (
             <ImageCarousel
-              images={imagesList}
+              images={carouselItems} 
               selectedIds={selectedImageIds}
-              onSelect={handleImageSelect}
+              onSelect={handleCarouselSelect}
               onPreview={handlePreviewImage}
+              activeLayerId={activeLayerId}
             />
           )}
         </main>

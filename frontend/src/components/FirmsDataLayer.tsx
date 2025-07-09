@@ -1,105 +1,97 @@
-import React, { useEffect, useState } from 'react';
-import { Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
+// src/components/FirmsDataLayer.tsx
 
+import React, { useEffect, useState } from 'react';
+import { useMap, Marker, Popup } from 'react-leaflet';
+import Papa from 'papaparse'; // Usaremos esta biblioteca para ler o CSV
+import { fireIcon } from './MapView'; // Importa o ícone de fogo que definimos no MapView
+
+// Instale a biblioteca papaparse se ainda não a tiver: npm install papaparse @types/papaparse
+
+// Interface para estruturar os dados de cada foco de incêndio
 interface FirePoint {
   latitude: number;
   longitude: number;
-  brightness: number;
   acq_date: string;
   acq_time: string;
+  confidence: string;
 }
 
-// 🔥 Ícone de fogo (código 10760660)
-const fireIcon = new L.Icon({
-  iconUrl: 'https://cdn-icons-png.flaticon.com/512/10760/10760660.png',
-  iconSize: [30, 30],
-  iconAnchor: [15, 30],
-  popupAnchor: [0, -30],
-});
-
-// 🔐 API KEY fixa para teste
-const nasaMapKey = '4d560e232ba80fc807eb657aa25957d2';
+// A sua chave de API da NASA FIRMS. É mais seguro guardá-la numa variável de ambiente.
+const NASA_API_KEY = '4d560e29b1207399999a444d320b925f'; // Substitua pela sua chave real, se necessário
 
 const FirmsDataLayer: React.FC = () => {
-  const [fireData, setFireData] = useState<FirePoint[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const map = useMap();
+  const [firePoints, setFirePoints] = useState<FirePoint[]>([]);
 
   useEffect(() => {
+    console.log("Iniciando requisição FIRMS...");
+
+    // 1. Cria um AbortController para poder cancelar a requisição
     const controller = new AbortController();
     const signal = controller.signal;
 
     const fetchFireData = async () => {
-      console.log("📡 Iniciando requisição FIRMS...");
-
-      if (!nasaMapKey) {
-        setError("Chave da API da NASA não definida.");
-        return;
-      }
-
-      const apiUrl = `https://firms.modaps.eosdis.nasa.gov/api/country/csv/${nasaMapKey}/VIIRS_SNPP_NRT/BRA/1/`;
-      console.log("🌐 Requisitando:", apiUrl);
+      // URL para buscar dados dos últimos 1 dia para o Brasil (BRA)
+      const FIRMS_URL = `https://firms.modaps.eosdis.nasa.gov/api/country/csv/${NASA_API_KEY}/VIIRS_SNPP_NRT/BRA/1/`;
+      console.log("Requisitando:", FIRMS_URL);
 
       try {
-        const response = await fetch(apiUrl, { signal });
+        const response = await fetch(FIRMS_URL, { signal }); // 2. Passa o 'signal' para o fetch
+
         if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Erro na API da FIRMS: ${response.statusText} - ${errorText}`);
+          throw new Error(`Erro na rede: ${response.statusText}`);
         }
 
         const csvText = await response.text();
-        const lines = csvText.split('\n');
-        const dataLines = lines.slice(1);
-
-        const points: FirePoint[] = dataLines.map(line => {
-          const columns = line.split(',');
-          if (columns.length > 3) {
-            return {
-              latitude: parseFloat(columns[1]),
-              longitude: parseFloat(columns[2]),
-              brightness: parseFloat(columns[3]),
-              acq_date: columns[5],
-              acq_time: columns[6],
-            };
+        
+        // Usa o PapaParse para converter o texto CSV em um array de objetos JSON
+        Papa.parse(csvText, {
+          header: true,
+          dynamicTyping: true,
+          complete: (results) => {
+            // Filtra linhas que possam ser nulas ou inválidas
+            const validData = results.data.filter((row: any) => row.latitude && row.longitude) as FirePoint[];
+            console.log(`${validData.length} focos encontrados.`);
+            setFirePoints(validData);
+          },
+          error: (error: any) => {
+            console.error("Erro ao parsear o CSV:", error);
           }
-          return null;
-        }).filter((p): p is FirePoint => p !== null && !isNaN(p.latitude) && !isNaN(p.longitude));
+        });
 
-        console.log(`🔥 ${points.length} focos encontrados.`);
-        setFireData(points);
-      } catch (err: any) {
-        console.error("❗ Erro FIRMS:", err);
-        if (err.name !== 'AbortError') {
-          setError(err.message);
+      } catch (error: any) {
+        // 4. Se o erro for um AbortError, nós o ignoramos. É um cancelamento esperado.
+        if (error.name === 'AbortError') {
+          console.log('Requisição FIRMS cancelada.');
+        } else {
+          // Se for outro tipo de erro, mostramo-lo na consola.
+          console.error("Erro FIRMS:", error);
         }
       }
     };
 
     fetchFireData();
 
+    // 3. A função de limpeza do useEffect. Será chamada quando o componente for desmontado.
     return () => {
-      controller.abort();
+      controller.abort(); // Cancela a requisição fetch se ela ainda estiver em andamento
     };
-  }, []);
+  }, []); // O array de dependências vazio faz com que este efeito seja executado apenas uma vez, quando o componente é montado.
 
-  if (error) {
-    console.error("❌ FIRMS Error:", error);
-    return null;
-  }
-
+  // Renderiza um Marcador para cada ponto de fogo encontrado
   return (
     <>
-      {fireData.map((point, index) => (
+      {firePoints.map((point, index) => (
         <Marker
           key={index}
           position={[point.latitude, point.longitude]}
           icon={fireIcon}
         >
           <Popup>
-            <b>🔥 Foco de Calor (FIRMS)</b><br />
+            <b>Foco de Incêndio (VIIRS)</b><br />
             Data: {point.acq_date}<br />
-            Hora (UTC): {point.acq_time}<br />
-            Brilho: {point.brightness} K
+            Hora: {point.acq_time}<br />
+            Confiança: {point.confidence}
           </Popup>
         </Marker>
       ))}

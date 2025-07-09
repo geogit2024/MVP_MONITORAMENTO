@@ -3,13 +3,13 @@
 import React from 'react';
 import { IndexResult } from '../App'; // Importa a interface
 import './Sidebar.css';
+import { GeoJsonObject } from 'geojson'; // ✅ MINHA INCLUSÃO: Importar o tipo GeoJsonObject
 
 const availableIndices = [
   'NDVI', 'SAVI', 'MSAVI', 'SR', 'Green NDVI', 'Red-Edge NDVI',
   'VARI', 'TSAVI', 'PVI', 'MTVI2', 'RTVIcore', 'CI Red-Edge', 'CI Green'
 ];
 
-// ✅ REVISÃO: Interface de props atualizada para o controle de sensibilidade
 interface SidebarProps {
   dateFrom: string; onDateFromChange: (v: string) => void;
   dateTo: string; onDateToChange: (v: string) => void;
@@ -29,9 +29,10 @@ interface SidebarProps {
   onIndexChange: (indexName: string, isChecked: boolean) => void;
   calculatedIndices: IndexResult[];
   onVisibleIndexChange: (url: string | null) => void;
-  // Novas props para o controle de sensibilidade da detecção de mudança
   changeThreshold: number;
   onChangeThreshold: (value: number) => void;
+  // ✅ MINHA INCLUSÃO: Nova prop para receber os dados GeoJSON das alterações detectadas.
+  changesGeoJson: GeoJsonObject | null;
 }
 
 export default function Sidebar({
@@ -40,12 +41,43 @@ export default function Sidebar({
   onDetectChange, onBulkDownload, onToggleTheme, onAoiFileUpload, onDeleteAoi,
   onCalculateIndices, selectedIndices, onIndexChange,
   calculatedIndices, onVisibleIndexChange,
-  // ✅ REVISÃO: Novas props desestruturadas
-  changeThreshold, onChangeThreshold
+  changeThreshold, onChangeThreshold,
+  // ✅ MINHA INCLUSÃO: Desestruturando a nova prop.
+  changesGeoJson
 }: SidebarProps) {
   const selectionCount = selectedImageIds.length;
   const isProcessing = loadingState !== 'idle';
   const canDetectChange = !isProcessing && selectedImageIds.length === 2;
+
+  // ✅ MINHA INCLUSÃO: Função para gerir o download do ficheiro GeoJSON.
+  const handleGeoJsonDownload = () => {
+    // Verifica se existem dados para descarregar
+    if (!changesGeoJson) {
+      alert('Não há dados de alteração para descarregar.');
+      return;
+    }
+
+    // 1. Converte o objeto GeoJSON para uma string
+    const geoJsonString = JSON.stringify(changesGeoJson, null, 2);
+
+    // 2. Cria um Blob (objeto binário)
+    const blob = new Blob([geoJsonString], { type: 'application/json' });
+
+    // 3. Cria uma URL temporária para o Blob
+    const url = URL.createObjectURL(blob);
+
+    // 4. Cria um elemento <a> para acionar o download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'alteracoes_detectadas.geojson'; // Nome do ficheiro a ser descarregado
+    document.body.appendChild(a);
+    a.click(); // Simula o clique no link
+
+    // 5. Limpa a URL e o elemento da memória
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
 
   return (
     <aside className="sidebar-container">
@@ -79,7 +111,6 @@ export default function Sidebar({
           <div className="action-group">
             <button onClick={onDetectChange} disabled={!canDetectChange} className="button button-primary">{loadingState === 'detectingChange' ? 'Analisando…' : 'Detectar Alterações'}</button>
             
-            {/* ✅ REVISÃO: Controle de sensibilidade (threshold) adicionado */}
             <div className="form-group slider-group">
               <label htmlFor="threshold-slider">
                 Sensibilidade: {changeThreshold.toFixed(2)}
@@ -96,6 +127,13 @@ export default function Sidebar({
                 title="Ajuste a sensibilidade. Valores menores detectam mais mudanças."
               />
             </div>
+
+            {/* ✅ MINHA INCLUSÃO: Botão de Download para o GeoJSON. Ele só aparece quando `changesGeoJson` contém dados. */}
+            {changesGeoJson && (
+              <button onClick={handleGeoJsonDownload} className="button button-success" style={{marginTop: '10px'}}>
+                Download Alterações (.geojson)
+              </button>
+            )}
 
             <hr className="sidebar-divider-inner"/>
 

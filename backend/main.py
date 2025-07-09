@@ -92,7 +92,6 @@ class ChangeDetectionResponse(BaseModel):
     changeGeoJson: Dict[str, Any]
     differenceImageUrl: Optional[str] = None
 
-# ✅ REVISÃO: Novos modelos para a funcionalidade de download
 class DownloadInfoRequest(BaseModel):
     imageId: str
     polygon: Dict[str, Any]
@@ -126,7 +125,7 @@ def get_image_bands(image: ee.Image, is_landsat: bool) -> ee.Image:
         thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
         return image.addBands(optical_bands, overwrite=True).addBands(thermal_bands, overwrite=True)
     else:
-        scaled_bands = image.select(['B.*']).multiply(0.0001)
+        scaled_bands = image.select('B.*').multiply(0.0001)
         return image.addBands(scaled_bands, overwrite=True)
 
 def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculate: List[str]) -> Dict[str, ee.Image]:
@@ -154,14 +153,14 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
 
     add_index('NDVI', '(NIR - RED) / (NIR + RED)', bands)
     add_index('SAVI', '((NIR - RED) / (NIR + RED + 0.5)) * 1.5', bands)
-    add_index('MSAVI', '(2 * NIR + 1 - sqrt((2 * NIR + 1)**2 - 8 * (NIR - RED))) / 2', bands)
+    add_index('MSAVI', '(2 * NIR + 1 - ((2 * NIR + 1)**2 - 8 * (NIR - RED))**0.5) / 2', bands)
     add_index('SR', 'NIR / RED', bands)
     add_index('VARI', '(GREEN - RED) / (GREEN + RED - BLUE)', bands)
     add_index('Green NDVI', '(NIR - GREEN) / (NIR + GREEN)', bands)
     add_index('CI Green', '(NIR / GREEN) - 1', bands)
     add_index('PVI', '(NIR - 0.3 * RED - 0.5)', bands)
     add_index('TSAVI', '(0.9 * (NIR - 0.9 * RED - 3)) / (RED + 0.9 * NIR - 0.9 * 3 + 1.5 * (1 + 0.9**2))', bands)
-    add_index('MTVI2', '1.5 * (1.2 * (NIR - GREEN) - 2.5 * (RED - GREEN)) / sqrt((2 * NIR + 1)**2 - (6 * NIR - 5 * sqrt(RED)) - 0.5)', bands)
+    add_index('MTVI2', '1.5 * (1.2 * (NIR - GREEN) - 2.5 * (RED - GREEN)) / (((2 * NIR + 1)**2 - (6 * NIR - 5 * RED**0.5) - 0.5))**0.5', bands)
 
     if not is_landsat:
         add_index('Red-Edge NDVI', '(NIR - RE1) / (NIR + RE1)', bands)
@@ -179,15 +178,15 @@ def search_earth_images(request: SearchRequest):
     """Busca imagens de satélite e retorna metadados e URL de thumbnail."""
     try:
         geometry = create_ee_geometry_from_json(request.polygon)
-        collection_id = SATELLITE_COLLECTIONS.get(request.satellite)
-        if not collection_id:
+        collection_name = SATELLITE_COLLECTIONS.get(request.satellite)
+        if not collection_name:
             raise HTTPException(status_code=400, detail="Satélite inválido.")
 
         is_landsat = "LANDSAT" in request.satellite
         cloud_property = 'CLOUD_COVER' if is_landsat else 'CLOUDY_PIXEL_PERCENTAGE'
         
         image_collection = (
-            ee.ImageCollection(collection_id)
+            ee.ImageCollection(collection_name)
             .filterBounds(geometry)
             .filterDate(str(request.dateFrom), str(request.dateTo))
             .filter(ee.Filter.lt(cloud_property, request.cloudPct))
@@ -200,7 +199,7 @@ def search_earth_images(request: SearchRequest):
             return []
 
         results = []
-        vis_params = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
+        vis_params_rgb = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
 
         for img_info in images_list_info:
             image_id = img_info['id']
@@ -208,7 +207,7 @@ def search_earth_images(request: SearchRequest):
             scaled_image = get_image_bands(image, is_landsat)
             dt = date.fromtimestamp(img_info['properties']['system:time_start'] / 1000)
             
-            thumbnail_url = scaled_image.visualize(**vis_params).getThumbURL({
+            thumbnail_url = scaled_image.visualize(**vis_params_rgb).getThumbURL({
                 'dimensions': 256,
                 'region': geometry.bounds(),
                 'format': 'jpg'
@@ -246,6 +245,7 @@ def get_image_preview_layer(request: ImagePreviewRequest):
         return {"tileUrl": map_id['tile_fetcher'].url_format}
 
     except Exception as e:
+        print(f"❌ Erro ao gerar preview: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao gerar preview: {e}")
 
 @app.post("/api/earth-images/indices", response_model=IndicesResponse)
@@ -261,14 +261,20 @@ def generate_indices(request: IndicesRequest):
         calculated_indices = calculate_indices_gee(image, is_landsat, request.indices)
 
         results = []
-        vis_params = {'min': -0.2, 'max': 1, 'palette': ['#CE7E45', '#DF923D', '#F1B555', '#FCD163', '#99B718', '#74A901', '#66A000', '#529400', '#3E8601', '#207401', '#056201', '#004C00']}
+        
+        # ✅ ALTERAÇÃO: Nova paleta de cores Vermelho-Amarelo-Verde para NDVI
+        vis_params_index = {
+            'min': 0, 
+            'max': 1, 
+            'palette': ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641']
+        }
         
         for index_name, index_image in calculated_indices.items():
             clipped_index_image = index_image.clip(geometry)
-            map_id = clipped_index_image.getMapId(vis_params)
+            map_id = clipped_index_image.getMapId(vis_params_index)
             
             download_url = clipped_index_image.getDownloadURL({
-                'scale': 30, 'crs': 'EPSG:4326', 'region': geometry, 'format': 'GEO_TIFF'
+                'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
             })
             
             results.append(IndexResult(
@@ -306,7 +312,7 @@ def detect_changes(request: ChangeDetectionRequest):
         gain_mask = ndvi_difference.gt(threshold)
         loss_mask = ndvi_difference.lt(-threshold)
         
-        change_map = gain_mask.add(loss_mask.multiply(-1)).selfMask()
+        change_map = ee.Image(0).where(gain_mask, 2).where(loss_mask, 1).selfMask()
 
         change_vectors = change_map.reduceToVectors(
             geometry=geometry, scale=30, geometryType='polygon',
@@ -328,7 +334,6 @@ def detect_changes(request: ChangeDetectionRequest):
         print(f"❌ Erro ao detectar mudanças: {e}")
         raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")
 
-# ✅ REVISÃO: Novo endpoint para obter informações de download
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse)
 def get_download_info(request: DownloadInfoRequest):
     """
@@ -337,17 +342,12 @@ def get_download_info(request: DownloadInfoRequest):
     try:
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
-
-        # Recorta a imagem original pela geometria da AOI
         clipped_image = image.clip(geometry)
-
-        # Gera o nome do arquivo a partir da data da imagem
         image_date_str = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
         file_name = f"{request.imageId.split('/')[-1]}_{image_date_str}.tif"
 
-        # Gera a URL para download em formato GeoTIFF
         download_url = clipped_image.getDownloadURL({
-            'scale': 30,  # Resolução em metros (ajuste conforme necessário)
+            'scale': 30,
             'crs': 'EPSG:4326',
             'region': geometry.bounds(),
             'format': 'GEO_TIFF'
@@ -367,7 +367,6 @@ def get_download_info(request: DownloadInfoRequest):
 def get_precipitation_tile():
     """Retorna uma camada de precipitação média para um período fixo."""
     try:
-        # Exemplo com dados do mês atual
         today = ee.Date(date.today())
         start_of_month = today.update(day=1)
         end_of_month = start_of_month.advance(1, 'month')
@@ -379,4 +378,5 @@ def get_precipitation_tile():
         return {"tileUrl": map_id_dict['tile_fetcher'].url_format}
         
     except Exception as e:
+        print(f"❌ Erro ao gerar camada de precipitação: {e}")
         raise HTTPException(status_code=500, detail=str(e))
