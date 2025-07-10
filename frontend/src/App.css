@@ -1,20 +1,20 @@
 /* src/App.css */
 
-/* --- VARIÁVEIS DE TEMA (TEMA ESCURO COMO PADRÃO) --- */
+/* ✅ ALTERAÇÃO: Variáveis de tema atualizadas para o novo estilo (vermelho e cinza escuro) */
 :root {
-  --background-primary: #111827;
-  --background-secondary: #1f2937;
-  --background-tertiary: #374151;
-  --text-primary: #f9fafb;
-  --text-secondary: #9ca3af;
-  --border-color: #374151;
+  --background-primary: #181a1b; /* Fundo principal muito escuro */
+  --background-secondary: #2a2a2e; /* Fundo dos painéis (sidebar/header) */
+  --background-tertiary: #3b3b40; /* Cor de hover e elementos secundários */
+  --text-primary: #e8e6e3; /* Texto principal (branco suave) */
+  --text-secondary: #b0b0b0; /* Texto secundário (cinza claro) */
+  --border-color: #404040; /* Cor das bordas e divisórias */
   --shadow-color: rgba(0, 0, 0, 0.5);
-  --button-primary-bg: #16a34a; /* Verde Escuro */
-  --button-secondary-bg: #4b5563; /* Cinza Escuro */
-  --button-danger-bg: #ef4444; /* Vermelho Escuro */
+  --button-primary-bg: #e63946; /* Vermelho forte para destaque principal */
+  --button-secondary-bg: #4a4a4e; /* Cinza médio para botões secundários */
+  --button-danger-bg: #e63946; /* Vermelho forte também para perigo */
   --button-text-color: #ffffff;
-  --button-disabled-bg: #4b5563;
-  --button-disabled-text: #9ca3af;
+  --button-disabled-bg: #3b3b40;
+  --button-disabled-text: #8a8a8a;
 }
 
 /* --- ESTILOS GERAIS DA APLICAÇÃO --- */
@@ -78,7 +78,7 @@ body, #root {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
-  position: relative; /* Essencial para o posicionamento do carrossel */
+  position: relative;
 }
 
 /* --- ESTILOS DA SIDEBAR --- */
@@ -88,10 +88,9 @@ body, #root {
   background-color: var(--background-secondary);
   display: flex;
   flex-direction: column;
-  flex-shrink: 0; /* Garante que a sidebar não encolha */
+  flex-shrink: 0;
 }
 
-/* O restante dos seus estilos para a sidebar e seus conteúdos permanecem aqui */
 .sidebar-scrollable-content, .sidebar-actions {
   padding: 1rem 1.5rem;
 }
@@ -119,7 +118,11 @@ body, #root {
 .sidebar-container h2, .sidebar-container h3, .filter-group legend {
   color: var(--text-primary);
   margin-top: 0;
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 1.1rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+  margin-bottom: 1.5rem;
 }
 
 .sidebar-container label {
@@ -154,33 +157,31 @@ body, #root {
   font-size: 16px;
   font-weight: 500;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px; /* ✅ ALTERAÇÃO: Raio da borda ligeiramente menor */
   cursor: pointer;
-  transition: background-color 0.2s ease, opacity 0.2s ease;
+  transition: background-color 0.2s ease, filter 0.2s ease;
 }
 
 .button-primary { background-color: var(--button-primary-bg); color: var(--button-text-color); }
-.button-primary:hover:not(:disabled) { filter: brightness(1.1); }
+.button-primary:hover:not(:disabled) { filter: brightness(1.15); }
 .button-secondary { background-color: var(--button-secondary-bg); color: var(--button-text-color); }
-.button-secondary:hover:not(:disabled) { filter: brightness(1.1); }
+.button-secondary:hover:not(:disabled) { filter: brightness(1.15); }
 .button-danger { background-color: var(--button-danger-bg); color: var(--button-text-color); }
-.button-danger:hover:not(:disabled) { filter: brightness(1.1); }
+.button-danger:hover:not(:disabled) { filter: brightness(1.15); }
 
 .button:disabled {
   background-color: var(--button-disabled-bg);
   color: var(--button-disabled-text);
   cursor: not-allowed;
   filter: none;
+  opacity: 0.6;
 }
 
 .indices-checkbox-group {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px 15px;
-  padding: 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 5px;
-  margin: 5px 0;
+  padding: 10px 0;
 }
 
 .checkbox-label {
@@ -198,18 +199,17 @@ body, #root {
 }
 
 /* --- ESTILOS DO CARROSSEL DE IMAGENS --- */
-/* ✅ ATUALIZAÇÃO: Classes alteradas para corresponder ao componente TSX */
 .image-carousel {
   position: absolute; 
-  bottom: 10px;
+  bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
   width: 80%;
   max-width: 1200px;
   background-color: rgba(20, 20, 25, 0.85);
   backdrop-filter: blur(5px);
-  border-top: 2px solid #374151;
-  border-radius: 10px 10px 0 0;
+  border-top: 1px solid var(--border-color);
+  border-radius: 12px;
   padding: 10px;
   box-sizing: border-box;
   display: flex;
@@ -227,19 +227,23 @@ body, #root {
   overflow: hidden;
   cursor: pointer;
   border: 3px solid transparent;
-  transition: transform 0.2s, border-color 0.2s;
+  transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 
-.thumbnail:hover { transform: scale(1.05); }
-.thumbnail.selected { border-color: #0099ff; }
+.thumbnail:hover { 
+  transform: scale(1.05); 
+  border-color: var(--button-primary-bg);
+}
+.thumbnail.selected { 
+  border-color: var(--button-primary-bg);
+  box-shadow: 0 0 15px rgba(230, 57, 70, 0.7);
+}
 .thumbnail img { width: 100%; height: 100%; object-fit: cover; }
 .date-label { position: absolute; bottom: 0; left: 0; right: 0; background-color: rgba(0, 0, 0, 0.7); color: white; text-align: center; padding: 5px 0; font-size: 0.8rem; }
-.selection-checkbox { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; background-color: rgba(0, 0, 0, 0.6); border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #00ff7f; font-size: 1.2rem; font-weight: bold; }
-.thumbnail.selected .selection-checkbox { background-color: #0099ff; }
-
+.selection-checkbox { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; background-color: rgba(0, 0, 0, 0.6); border: 2px solid #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--button-primary-bg); font-size: 1.2rem; font-weight: bold; }
+.thumbnail.selected .selection-checkbox { background-color: var(--button-primary-bg); color: white; }
 
 /* --- ESTILOS DO MAPA E INDICADORES --- */
-
 .main-content > .leaflet-container {
     flex-grow: 1;
 }

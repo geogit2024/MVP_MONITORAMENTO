@@ -111,7 +111,7 @@ const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { ur
             layerRef.current = newLayer;
         }
         return () => {
-            if (layerRef.current) {
+            if (layerRef.current && map.hasLayer(layerRef.current)) {
                 map.removeLayer(layerRef.current);
             }
         };
@@ -120,6 +120,7 @@ const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { ur
     return null;
 };
 
+// ✅ ATUALIZAÇÃO: Adicionadas novas props para o z-index
 interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
   visibleLayerUrl: string | null;
@@ -130,6 +131,9 @@ interface MapViewProps {
   onBaseMapChange: (key: string) => void;
   mapViewTarget: LatLngBoundsExpression | null;
   differenceLayerUrl: string | null;
+  indexLayerZIndex: number;
+  differenceLayerZIndex: number;
+  previewLayerZIndex: number;
 }
 
 export default function MapView({
@@ -142,33 +146,22 @@ export default function MapView({
   onBaseMapChange,
   mapViewTarget,
   differenceLayerUrl,
+  indexLayerZIndex,
+  differenceLayerZIndex,
+  previewLayerZIndex,
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
 
   const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
   
-  // ✅ ATUALIZAÇÃO: Lógica de cores ajustada para os novos rótulos do backend
   const changePolygonStyle = (feature?: Feature) => {
     const type = parseInt(String(feature?.properties?.change_type), 10);
-
-    if (type === 2) { // 2 = Ganho (Acréscimo de vegetação)
-      return {
-        fillColor: '#00ff00',
-        color: '#006400',
-        weight: 1.5,
-        fillOpacity: 0.7
-      };
-    } else if (type === 1) { // 1 = Perda (Supressão de vegetação)
-      return {
-        fillColor: '#ff0000',
-        color: '#8b0000',
-        weight: 1.5,
-        fillOpacity: 0.7
-      };
+    if (type === 2) {
+      return { fillColor: '#00ff00', color: '#006400', weight: 1.5, fillOpacity: 0.7 };
+    } else if (type === 1) {
+      return { fillColor: '#ff0000', color: '#8b0000', weight: 1.5, fillOpacity: 0.7 };
     }
-    
-    // Estilo padrão para qualquer outro caso
     return { color: '#808080', weight: 1, fillOpacity: 0.5 };
   };
 
@@ -182,20 +175,17 @@ export default function MapView({
         <GeomanDrawControl onDrawComplete={onDrawComplete} />
         {activeAoi && <GeoJSON data={activeAoi} style={aoiStyle} />}
         
-        {/* Camadas dinâmicas de análise */}
-        <DynamicTileLayer url={visibleLayerUrl} zIndex={10} attribution="Índice Calculado" />
-        <DynamicTileLayer url={previewLayerUrl} zIndex={11} attribution="Pré-visualização" />
+        {/* ✅ ATUALIZAÇÃO: Camadas dinâmicas agora usam o z-index vindo das props */}
+        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
+        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
+        <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
         
-        {/* Camadas de Detecção de Mudança */}
-        <DynamicTileLayer url={differenceLayerUrl} zIndex={12} opacity={0.7} attribution="Diferença NDVI" />
         {changePolygons && <GeoJSON data={changePolygons} style={changePolygonStyle} />}
         
-        {/* Outras camadas de dados */}
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />
       </MapContainer>
 
-      {/* Botões de camadas adicionais */}
       <div style={{ position: 'absolute', bottom: '20px', left: '10px', zIndex: 1001, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <button className="map-layer-button firms" onClick={() => setShowFirmsPoints(p => !p)}>
           {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
