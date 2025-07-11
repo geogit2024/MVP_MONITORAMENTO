@@ -43,7 +43,7 @@ const baseMaps = {
   }
 };
 
-// Componente para animar o mapa
+// Componente para animar o mapa (sem alterações)
 const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) => {
   const map = useMap();
   useEffect(() => {
@@ -52,14 +52,18 @@ const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) 
   return null;
 };
 
-// Componente para controle de desenho Geoman
-const GeomanDrawControl = ({ onDrawComplete }: { onDrawComplete: (geojson: Feature) => void }) => {
+// ✅ CORREÇÃO 1: Componente de desenho agora é controlado por uma prop
+const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete: (geojson: Feature) => void, drawingEnabled: boolean }) => {
   const map = useMap();
+
+  // Efeito para adicionar os controles e gerenciar eventos
   useEffect(() => {
+    // Adiciona os botões de controle ao mapa
+    if (!map.pm) return;
     map.pm.addControls({
       position: 'topleft',
       drawPolygon: true,
-      drawCircle: true,
+      drawCircle: false,
       removalMode: true,
       drawMarker: false,
       drawCircleMarker: false,
@@ -73,29 +77,40 @@ const GeomanDrawControl = ({ onDrawComplete }: { onDrawComplete: (geojson: Featu
     map.pm.setPathOptions({ color: '#ff7800', fill: false, weight: 3 });
 
     const handleCreate = (e: any) => {
-      map.pm.getGeomanLayers().forEach(l => {
-        if (l._leaflet_id !== e.layer._leaflet_id) {
-          l.remove();
+      // Remove desenhos anteriores para permitir apenas um por vez
+      map.pm.getGeomanLayers().forEach(layer => {
+        if (layer._leaflet_id !== e.layer._leaflet_id) {
+          layer.remove();
         }
       });
-      let finalLayer = e.layer;
-      if (e.shape === 'Circle') {
-        finalLayer = L.PM.Utils.circleToPolygon(e.layer, 64);
-      }
-      const geojson = finalLayer.toGeoJSON() as Feature;
+      const geojson = e.layer.toGeoJSON() as Feature;
       onDrawComplete(geojson);
+      map.pm.disableDraw(); // Desativa o modo de desenho após a conclusão
     };
+
     map.on('pm:create', handleCreate);
+
+    // Cleanup: remove controles e eventos quando o componente for desmontado
     return () => {
       map.pm.removeControls();
       map.off('pm:create', handleCreate);
     };
   }, [map, onDrawComplete]);
+  
+  // Efeito para ativar/desativar o modo de desenho
+  useEffect(() => {
+    if (!map.pm) return;
+    if (drawingEnabled) {
+      map.pm.enableDraw('Polygon');
+    } else {
+      map.pm.disableDraw();
+    }
+  }, [drawingEnabled, map]);
+
   return null;
 };
 
-
-// Componente para gerenciar camadas de Tile dinâmicas
+// Componente para gerenciar camadas de Tile dinâmicas (sem alterações)
 const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { url: string | null; zIndex?: number; opacity?: number; attribution?: string }) => {
     const map = useMap();
     const layerRef = useRef<L.TileLayer | null>(null);
@@ -120,7 +135,7 @@ const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { ur
     return null;
 };
 
-// ✅ ATUALIZAÇÃO: Adicionadas novas props para o z-index
+// Interface de props do componente principal
 interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
   visibleLayerUrl: string | null;
@@ -134,6 +149,7 @@ interface MapViewProps {
   indexLayerZIndex: number;
   differenceLayerZIndex: number;
   previewLayerZIndex: number;
+  drawingEnabled: boolean; // ✅ CORREÇÃO 1: Nova prop adicionada
 }
 
 export default function MapView({
@@ -149,6 +165,7 @@ export default function MapView({
   indexLayerZIndex,
   differenceLayerZIndex,
   previewLayerZIndex,
+  drawingEnabled, // ✅ CORREÇÃO 1: Nova prop recebida
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
@@ -169,18 +186,21 @@ export default function MapView({
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-      <MapContainer center={[-22.7273, -47.6492]} zoom={13} style={{ height: '100%', width: '100%' }}>
+      <MapContainer center={[-22.505, -43.179]} zoom={13} style={{ height: '100%', width: '100%' }}>
         <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
         <MapViewAnimator target={mapViewTarget} />
-        <GeomanDrawControl onDrawComplete={onDrawComplete} />
-        {activeAoi && <GeoJSON data={activeAoi} style={aoiStyle} />}
         
-        {/* ✅ ATUALIZAÇÃO: Camadas dinâmicas agora usam o z-index vindo das props */}
+        {/* ✅ CORREÇÃO 1: Passa a prop para o controle de desenho */}
+        <GeomanDrawControl onDrawComplete={onDrawComplete} drawingEnabled={drawingEnabled} />
+
+        {/* ✅ CORREÇÃO 2: Adicionada uma 'key' para forçar a recriação da camada GeoJSON ao mudar a propriedade. */}
+        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />}
+        
         <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
         <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
         <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
         
-        {changePolygons && <GeoJSON data={changePolygons} style={changePolygonStyle} />}
+        {changePolygons && <GeoJSON key={JSON.stringify(changePolygons)} data={changePolygons} style={changePolygonStyle} />}
         
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />

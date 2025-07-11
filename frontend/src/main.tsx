@@ -1,11 +1,16 @@
+// src/main.tsx
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom'; // ✅ Importar
 import App from './App';
-// Estilos globais (inclui Leaflet CSS via import em MapView)
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {/* ✅ Envolver o App com o BrowserRouter é essencial */}
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </React.StrictMode>
 );
