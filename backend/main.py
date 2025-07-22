@@ -155,6 +155,9 @@ class ChangeDetectionRequest(BaseModel):
 class ChangeDetectionResponse(BaseModel):
     changeGeoJson: Dict[str, Any]
     differenceImageUrl: Optional[str] = None
+    # ✅ NOVOS CAMPOS PARA AS ÁREAS
+    gainAreaHa: float  # Área de ganho em hectares
+    lossAreaHa: float  # Área de perda em hectares
 
 class DownloadInfoRequest(BaseModel):
     imageId: str
@@ -508,31 +511,73 @@ def generate_indices(request: IndicesRequest):
 
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 def detect_changes(request: ChangeDetectionRequest):
-    """Detecta mudanças entre duas imagens e retorna polígonos e uma camada de diferença."""
+    """
+    Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas
+    e retorna os resultados.
+    """
     try:
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
         geometry = create_ee_geometry_from_json(request.polygon)
         is_landsat = "LANDSAT" in request.satellite
+
         before_ndvi = calculate_indices_gee(before_image, is_landsat, ['NDVI'])['NDVI']
         after_ndvi = calculate_indices_gee(after_image, is_landsat, ['NDVI'])['NDVI']
+        
         ndvi_difference = after_ndvi.subtract(before_ndvi)
         threshold = request.threshold or 0.25
+        
         gain_mask = ndvi_difference.gt(threshold)
         loss_mask = ndvi_difference.lt(-threshold)
+        
         change_map = ee.Image(0).where(gain_mask, 2).where(loss_mask, 1).selfMask()
+
+        # Converte a imagem de mudança para vetores (polígonos)
         change_vectors = change_map.reduceToVectors(
             geometry=geometry, scale=30, geometryType='polygon',
             eightConnected=False, labelProperty='change_type', maxPixels=1e10
         )
-        change_geojson = change_vectors.getInfo()
+
+        # ✅ --- INÍCIO DA NOVA LÓGICA DE SUAVIZAÇÃO E CÁLCULO ---
+
+        # 1. SUAVIZAÇÃO: Aplica um buffer para suavizar as bordas dos polígonos
+        # Um valor pequeno como 10 metros é geralmente suficiente.
+        def smooth_feature(feature):
+            return feature.buffer(10, maxError=1).buffer(-10, maxError=1)
+
+        smoothed_vectors = change_vectors.map(smooth_feature)
+
+        # 2. CÁLCULO DE ÁREA: Separa os polígonos de ganho e perda
+        gain_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 2))
+        loss_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 1))
+
+        # Calcula a área total para cada classe e converte de m² para hectares
+        gain_area_ha = gain_polygons.geometry().area(maxError=1).divide(10000)
+        loss_area_ha = loss_polygons.geometry().area(maxError=1).divide(10000)
+
+        # Obtém os valores calculados como números para enviar na resposta
+        gain_area_value = gain_area_ha.getInfo() or 0.0
+        loss_area_value = loss_area_ha.getInfo() or 0.0
+        
+        # --- FIM DA NOVA LÓGICA ---
+
+        change_geojson = smoothed_vectors.getInfo()
+
         diff_vis_params = {'min': -0.5, 'max': 0.5, 'palette': ['red', '#ffcccb', 'white', '#90ee90', 'green']}
         diff_map_id = ndvi_difference.clip(geometry).getMapId(diff_vis_params)
         diff_url = diff_map_id['tile_fetcher'].url_format
-        return ChangeDetectionResponse(changeGeoJson=change_geojson, differenceImageUrl=diff_url)
+
+        return ChangeDetectionResponse(
+            changeGeoJson=change_geojson, 
+            differenceImageUrl=diff_url,
+            gainAreaHa=gain_area_value,
+            lossAreaHa=loss_area_value
+        )
+
     except Exception as e:
         print(f"❌ Erro ao detectar mudanças: {e}")
         raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")
+
 
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 def get_download_info(request: DownloadInfoRequest):

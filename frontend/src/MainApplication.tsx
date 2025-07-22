@@ -10,10 +10,16 @@ import SidebarClima from './components/SidebarClima';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
 
+// ✅ CORREÇÃO: Importa MapStateProvider
+import { MapStateProvider } from './context/MapStateContext'; 
+
 // Importa estilos e bibliotecas auxiliares
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
+
+import ChangeResultModal from './components/ChangeResultModal'; // ✅ Importa o novo componente
+
 
 // --- DEFINIÇÃO DE TIPOS E INTERFACES ---
 export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
@@ -62,6 +68,9 @@ export default function MainApplication() {
     const [changeThreshold, setChangeThreshold] = useState(0.25);
     const [differenceLayerUrl, setDifferenceLayerUrl] = useState<string | null>(null);
     const [isChangeLayerVisible, setIsChangeLayerVisible] = useState(false);
+    
+    // ✅ CORREÇÃO: Declaração de estado corrigida. Inicializa como nulo.
+    const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number } | null>(null);
 
     useEffect(() => {
         const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({ id: `index-${index.indexName}`, date: index.indexName, thumbnailUrl: INDEX_LAYER_ICON_URI }));
@@ -79,6 +88,7 @@ export default function MainApplication() {
         setPreviewLayerUrl(null);
         setDifferenceLayerUrl(null);
         setIsChangeLayerVisible(false);
+        setChangeAreas(null); // ✅ Limpa as áreas de mudança também
     }, []);
 
     const setAoiAndZoom = useCallback((feature: Feature) => {
@@ -172,6 +182,10 @@ export default function MainApplication() {
             if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao detectar mudanças"); }
             const data = await res.json();
             setDifferenceLayerUrl(data.differenceImageUrl);
+            
+            // ✅ ATUALIZAÇÃO: Salva os dados da área no estado para exibir o modal.
+            setChangeAreas({ gain: data.gainAreaHa, loss: data.lossAreaHa });
+
             if (data.changeGeoJson && data.changeGeoJson.features.length > 0) {
                 setChangePolygons(data.changeGeoJson);
                 setIsChangeLayerVisible(true);
@@ -214,7 +228,7 @@ export default function MainApplication() {
             setLoadingState('idle');
         }
     }, [selectedImageIds, activeAoi, showNotification]);
-  
+ 
     const handleAoiFileUpload = useCallback(async (file: File | null) => {
         if (!file) return;
         setLoadingState('searching'); 
@@ -289,51 +303,69 @@ export default function MainApplication() {
     const differenceLayerZIndex = activeLayerId === CHANGE_LAYER_ID ? Z_INDEX.ACTIVE : Z_INDEX.DIFFERENCE_MAP;
 
     return (
-        <div className={`app-container theme-${theme}`}>
-            {loadingState !== 'idle' && <LoadingIndicator text="Processando..." subtext="Por favor, aguarde." />}
-            {notification && <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />}
-            <div className="module-navigation">
-                <button className={activeModule === 'territorial' ? 'active' : ''} onClick={() => setActiveModule('territorial')}>Monitoramento Territorial</button>
-                <button className={activeModule === 'clima' ? 'active' : ''} onClick={() => setActiveModule('clima')}>Monitoramento do Clima</button>
-            </div>
-            <div className="main-view">
-                {activeModule === 'territorial' ? (
-                    <SidebarTerritorial
-                        dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
-                        cloudPct={cloudPct} onCloudPctChange={setCloudPct} satellite={satellite} onSatelliteChange={setSatellite}
-                        satellites={SATELLITES} theme={theme} loadingState={loadingState}
-                        selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
-                        onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
-                        onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
-                        onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
-                        calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
-                        changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
-                        changesGeoJson={changePolygons}
-                    />
-                ) : (
-                    <SidebarClima theme={theme} onToggleTheme={handleToggleTheme}/>
-                )}
-                <main className="main-content">
-                    <MapView
-                        onDrawComplete={handleDrawComplete} visibleLayerUrl={visibleLayerUrl}
-                        previewLayerUrl={previewLayerUrl} activeAoi={activeAoi}
-                        changePolygons={isChangeLayerVisible ? changePolygons : null}
-                        baseMapKey={baseMapKey} onBaseMapChange={setBaseMapKey}
-                        mapViewTarget={mapViewTarget} differenceLayerUrl={differenceLayerUrl}
-                        indexLayerZIndex={indexLayerZIndex} differenceLayerZIndex={differenceLayerZIndex}
-                        previewLayerZIndex={Z_INDEX.PREVIEW}
-                    />
-                    {activeModule === 'territorial' && carouselItems.length > 0 && (
-                        <ImageCarousel
-                            images={carouselItems} 
-                            selectedIds={selectedImageIds}
-                            onSelect={handleCarouselSelect}
-                            onPreview={handlePreviewImage}
-                            activeLayerId={activeLayerId}
+        <MapStateProvider>
+            <div className={`app-container theme-${theme}`}>
+                {loadingState !== 'idle' && <LoadingIndicator text="Processando..." subtext="Por favor, aguarde." />}
+                {notification && <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />}
+                <div className="module-navigation">
+                    <button className={activeModule === 'territorial' ? 'active' : ''} onClick={() => setActiveModule('territorial')}>Monitoramento Territorial</button>
+                    <button className={activeModule === 'clima' ? 'active' : ''} onClick={() => setActiveModule('clima')}>Monitoramento do Clima</button>
+                </div>
+                <div className="main-view">
+                    {activeModule === 'territorial' ? (
+                        <SidebarTerritorial
+                            dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
+                            cloudPct={cloudPct} onCloudPctChange={setCloudPct} satellite={satellite} onSatelliteChange={setSatellite}
+                            satellites={SATELLITES} theme={theme} loadingState={loadingState}
+                            selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
+                            onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
+                            onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
+                            onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
+                            calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
+                            changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
+                            activeAoi={activeAoi}
                         />
+                    ) : (
+                        <SidebarClima theme={theme} onToggleTheme={handleToggleTheme}/>
                     )}
-                </main>
+                    <main className="main-content">
+                        <MapView
+                            onDrawComplete={handleDrawComplete}
+                            drawingEnabled={true}
+                            visibleLayerUrl={visibleLayerUrl}
+                            previewLayerUrl={previewLayerUrl} 
+                            activeAoi={activeAoi}
+                            changePolygons={isChangeLayerVisible ? changePolygons : null}
+                            baseMapKey={baseMapKey} onBaseMapChange={setBaseMapKey}
+                            mapViewTarget={mapViewTarget} 
+                            differenceLayerUrl={differenceLayerUrl}
+                            indexLayerZIndex={indexLayerZIndex} 
+                            differenceLayerZIndex={differenceLayerZIndex}
+                            previewLayerZIndex={Z_INDEX.PREVIEW}
+                            classifiedPlots={null}
+                            onPropertySelect={() => {}}
+                            refreshTrigger={null}
+                        />
+                        {activeModule === 'territorial' && carouselItems.length > 0 && (
+                            <ImageCarousel
+                                images={carouselItems} 
+                                selectedIds={selectedImageIds}
+                                onSelect={handleCarouselSelect}
+                                onPreview={handlePreviewImage}
+                                activeLayerId={activeLayerId}
+                            />
+                        )}
+                    </main>
+                </div>
+                {/* ✅ Renderização Condicional do Modal */}
+                {changeAreas && (
+                    <ChangeResultModal
+                        gainArea={changeAreas.gain}
+                        lossArea={changeAreas.loss}
+                        onClose={() => setChangeAreas(null)}
+                    />
+                )}
             </div>
-        </div>
+        </MapStateProvider>
     );
 }
