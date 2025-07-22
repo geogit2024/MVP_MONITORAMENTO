@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, useMap, GeoJSON } from 'react-leaflet';
-import L, { LatLngBoundsExpression } from 'leaflet';
-import { Feature } from 'geojson';
+import L, { LatLngBoundsExpression, Layer } from 'leaflet';
+import { Feature, FeatureCollection } from 'geojson'; // Importa FeatureCollection
 import FirmsDataLayer from './FirmsDataLayer';
 import PrecipitationLayer from './PrecipitationLayer';
 import 'leaflet/dist/leaflet.css';
@@ -52,13 +52,11 @@ const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) 
   return null;
 };
 
-// ✅ CORREÇÃO 1: Componente de desenho agora é controlado por uma prop
+// Componente de desenho controlado por prop (sem alterações)
 const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete: (geojson: Feature) => void, drawingEnabled: boolean }) => {
   const map = useMap();
 
-  // Efeito para adicionar os controles e gerenciar eventos
   useEffect(() => {
-    // Adiciona os botões de controle ao mapa
     if (!map.pm) return;
     map.pm.addControls({
       position: 'topleft',
@@ -77,7 +75,6 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
     map.pm.setPathOptions({ color: '#ff7800', fill: false, weight: 3 });
 
     const handleCreate = (e: any) => {
-      // Remove desenhos anteriores para permitir apenas um por vez
       map.pm.getGeomanLayers().forEach(layer => {
         if (layer._leaflet_id !== e.layer._leaflet_id) {
           layer.remove();
@@ -85,19 +82,17 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
       });
       const geojson = e.layer.toGeoJSON() as Feature;
       onDrawComplete(geojson);
-      map.pm.disableDraw(); // Desativa o modo de desenho após a conclusão
+      map.pm.disableDraw();
     };
 
     map.on('pm:create', handleCreate);
 
-    // Cleanup: remove controles e eventos quando o componente for desmontado
     return () => {
       map.pm.removeControls();
       map.off('pm:create', handleCreate);
     };
   }, [map, onDrawComplete]);
   
-  // Efeito para ativar/desativar o modo de desenho
   useEffect(() => {
     if (!map.pm) return;
     if (drawingEnabled) {
@@ -149,7 +144,9 @@ interface MapViewProps {
   indexLayerZIndex: number;
   differenceLayerZIndex: number;
   previewLayerZIndex: number;
-  drawingEnabled: boolean; // ✅ CORREÇÃO 1: Nova prop adicionada
+  drawingEnabled: boolean;
+  onPropertySelect: (id: number) => void; // ✅ NOVO: Função para notificar seleção
+  refreshTrigger: any; // ✅ NOVO: Gatilho para atualizar a lista de propriedades
 }
 
 export default function MapView({
@@ -165,13 +162,40 @@ export default function MapView({
   indexLayerZIndex,
   differenceLayerZIndex,
   previewLayerZIndex,
-  drawingEnabled, // ✅ CORREÇÃO 1: Nova prop recebida
+  drawingEnabled,
+  onPropertySelect, // ✅ NOVO: Prop recebida
+  refreshTrigger,   // ✅ NOVO: Prop recebida
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
-
-  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
   
+  // ✅ NOVO: Estado para armazenar as propriedades carregadas do banco
+  const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
+
+  // ✅ NOVO: Função para buscar as propriedades da API
+  const fetchProperties = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/properties');
+      if (!response.ok) {
+        throw new Error('Falha ao carregar propriedades do servidor.');
+      }
+      const data: FeatureCollection = await response.json();
+      setPropertiesData(data);
+    } catch (error) {
+      console.error(error);
+      // Aqui você poderia adicionar um toast ou notificação de erro
+    }
+  };
+
+  // ✅ NOVO: Efeito para carregar as propriedades na montagem do componente e quando o gatilho for acionado
+  useEffect(() => {
+    fetchProperties();
+  }, [refreshTrigger]);
+
+  // Estilos para as diferentes camadas GeoJSON
+  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
+  const propertyLayerStyle = { color: '#007bff', weight: 2, opacity: 0.8, fillColor: '#007bff', fillOpacity: 0.2 };
+
   const changePolygonStyle = (feature?: Feature) => {
     const type = parseInt(String(feature?.properties?.change_type), 10);
     if (type === 2) {
@@ -180,6 +204,26 @@ export default function MapView({
       return { fillColor: '#ff0000', color: '#8b0000', weight: 1.5, fillOpacity: 0.7 };
     }
     return { color: '#808080', weight: 1, fillOpacity: 0.5 };
+  };
+  
+  // ✅ NOVO: Função para lidar com eventos em cada polígono de propriedade
+  const onEachProperty = (feature: Feature, layer: Layer) => {
+    if (feature.properties) {
+      const { nome, proprietario, id } = feature.properties;
+      const popupContent = `
+        <b>${nome}</b><br>
+        Proprietário: ${proprietario}<br>
+        <small>Clique para ver detalhes</small>
+      `;
+      layer.bindPopup(popupContent);
+
+      // Adiciona o evento de clique para notificar o componente pai
+      layer.on({
+        click: () => {
+          onPropertySelect(id);
+        },
+      });
+    }
   };
 
   const activeBaseMap = baseMaps[baseMapKey as keyof typeof baseMaps] || baseMaps.osm;
@@ -190,17 +234,19 @@ export default function MapView({
         <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
         <MapViewAnimator target={mapViewTarget} />
         
-        {/* ✅ CORREÇÃO 1: Passa a prop para o controle de desenho */}
         <GeomanDrawControl onDrawComplete={onDrawComplete} drawingEnabled={drawingEnabled} />
 
-        {/* ✅ CORREÇÃO 2: Adicionada uma 'key' para forçar a recriação da camada GeoJSON ao mudar a propriedade. */}
-        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />}
-        
+        {/* Camadas dinâmicas de sobreposição */}
         <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
         <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
         <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
         
+        {/* Camadas GeoJSON */}
+        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />}
         {changePolygons && <GeoJSON key={JSON.stringify(changePolygons)} data={changePolygons} style={changePolygonStyle} />}
+        
+        {/* ✅ NOVO: Camada para exibir todas as propriedades cadastradas */}
+        {propertiesData && <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />}
         
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />

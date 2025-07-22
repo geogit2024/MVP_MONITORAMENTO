@@ -1,0 +1,56 @@
+/* src/theme.css */
+/* Arquivo de Tema Global - Identidade Visual MapBiomas */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* 1. Paleta de Cores */
+  --background-main: #121212;          /* Fundo mais escuro da aplicação */
+  --background-panel: #242424;         /* Fundo de painéis, sidebars e modais */
+  --background-panel-light: #2E2E2E;   /* Fundo de inputs e elementos interativos */
+  --border-color: #444444;             /* Bordas de painéis, inputs e divisórias */
+  
+  --text-primary: #E0E0E0;              /* Cor de texto principal, títulos */
+  --text-secondary: #A0A0A0;            /* Cor de texto secundário, labels, placeholders */
+
+  --accent-primary: #00AEEF;           /* Azul/Ciano para destaques, links e botões primários */
+  --accent-primary-glow: rgba(0, 174, 239, 0.4); /* Sombra de foco para o azul */
+
+  /* 2. Estilos de Botão */
+  --button-primary-bg: var(--accent-primary);
+  --button-primary-hover-bg: #0099D1; /* Azul um pouco mais escuro para hover */
+  --button-secondary-bg: #3c3c3c;
+  --button-secondary-hover-bg: #4d4d4d;
+  --button-text-color: #FFFFFF;
+
+  /* 3. Tipografia (Fontes) */
+  --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 600;
+
+  /* 4. Outras Variáveis */
+  --border-radius: 4px;
+  --shadow-color: rgba(0, 0, 0, 0.5);
+} /* <--- ESTA CHAVE ESTAVA FALTANDO */
+
+/* Reset Básico e Estilos Globais */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--background-main);
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-bold);
+}
+
+p {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}

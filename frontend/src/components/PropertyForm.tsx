@@ -1,27 +1,65 @@
 // src/components/PropertyForm.tsx
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Feature } from 'geojson';
 import './PropertyForm.css';
-import { Property } from '../mockProperties'; // Importa a interface Property
+import { Property } from '../../types'; // Ajuste o caminho se necessário
 
 interface PropertyFormProps {
   geometry: Feature;
   onSubmit: (formData: any) => void;
   onCancel: () => void;
-  initialData?: Property | null; // ✅ NOVA PROP: para dados iniciais
+  initialData?: Property | null;
+  isReadOnly?: boolean;
 }
 
-const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCancel, initialData }) => {
-  
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+const PropertyForm: React.FC<PropertyFormProps> = ({
+  geometry,
+  onSubmit,
+  onCancel,
+  initialData,
+  isReadOnly = false,
+}) => {
+  const [isLoading, setIsLoading] = useState(false);
+
+  // ✅ ESTA É A FUNÇÃO COMPLETA E CORRIGIDA
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setIsLoading(true);
+
     const formData = new FormData(event.currentTarget);
-    const dataObject = Object.fromEntries(formData.entries());
-    onSubmit(dataObject);
+    formData.append('geometry', JSON.stringify(geometry.geometry));
+
+    try {
+      const response = await fetch('http://localhost:8000/api/properties', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (errorData.detail && Array.isArray(errorData.detail)) {
+          const errorMessages = errorData.detail
+            .map((err: any) => `Campo '${err.loc[1]}': ${err.msg}`)
+            .join('\n');
+          throw new Error(`Erros de validação:\n${errorMessages}`);
+        }
+        throw new Error(errorData.detail || 'Ocorreu um erro desconhecido no servidor.');
+      }
+
+      const result = await response.json();
+      onSubmit(result);
+
+    } catch (error: any) {
+      console.error('Erro ao cadastrar propriedade:', error);
+      alert(error.message); // O alert exibirá a mensagem de erro real
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const formTitle = initialData ? "Detalhes da Propriedade" : "Cadastro de Propriedade Rural";
+  const primaryButtonText = isReadOnly ? "Fechar" : "Salvar";
 
   return (
     <div className="property-form-container">
@@ -31,13 +69,12 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCance
       </div>
       
       <div className="form-body">
-        <form id="property-form" onSubmit={handleSubmit}>
-          <fieldset>
+        <form id="property-form" onSubmit={!isReadOnly ? handleSubmit : (e) => e.preventDefault()}>
+          <fieldset disabled={isLoading || isReadOnly}>
             <legend>1. Identificação do Imóvel Rural</legend>
             <div className="form-grid">
               <div className="form-group full-width">
                 <label htmlFor="propriedade_nome">Nome da propriedade</label>
-                {/* ✅ USA defaultValue PARA PREENCHER O CAMPO */}
                 <input type="text" id="propriedade_nome" name="propriedade_nome" defaultValue={initialData?.propriedade_nome || ''} required />
               </div>
               <div className="form-group">
@@ -59,7 +96,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCance
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset disabled={isLoading || isReadOnly}>
             <legend>2. Identificação do Proprietário ou Possuidor</legend>
             <div className="form-grid">
               <div className="form-group full-width">
@@ -77,7 +114,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCance
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset disabled={isLoading || isReadOnly}>
             <legend>3. Documentação do Imóvel</legend>
             <div className="form-grid">
               <div className="form-group">
@@ -91,7 +128,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCance
             </div>
           </fieldset>
           
-          <fieldset>
+          <fieldset disabled={isLoading || isReadOnly}>
               <legend>6. Anexos (Digitalizados)</legend>
               <div className="form-group">
                   <label htmlFor="doc_identidade">Documento de identidade (RG/CPF ou CNPJ)</label>
@@ -106,8 +143,16 @@ const PropertyForm: React.FC<PropertyFormProps> = ({ geometry, onSubmit, onCance
       </div>
 
       <div className="form-actions">
-        <button type="button" onClick={onCancel} className="button-secondary">Cancelar</button>
-        <button type="submit" form="property-form" className="button-primary">Salvar</button>
+        {!isReadOnly && <button type="button" onClick={onCancel} className="button-secondary" disabled={isLoading}>Cancelar</button>}
+        <button 
+          type={isReadOnly ? "button" : "submit"}
+          form="property-form" 
+          onClick={isReadOnly ? onCancel : undefined}
+          className="button-primary" 
+          disabled={isLoading}
+        >
+          {isLoading ? 'Salvando...' : primaryButtonText}
+        </button>
       </div>
     </div>
   );
