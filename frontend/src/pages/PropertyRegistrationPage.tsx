@@ -1,7 +1,7 @@
 // src/pages/PropertyRegistrationPage.tsx
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { Feature, FeatureCollection, Polygon } from 'geojson';
+import { Feature, FeatureCollection, Polygon, Geometry } from 'geojson';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import MapView from '../components/MapView';
 import SidebarCadastro from '../components/SidebarCadastro';
@@ -9,9 +9,9 @@ import PropertyForm from '../components/PropertyForm';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
 import './PropertyRegistrationPage.css';
+import * as turf from '@turf/turf'; // Importa a biblioteca Turf.js
 
-// ✅ TIPO DE DADO REAL: Definimos a interface da propriedade aqui, para corresponder à API.
-// Removida a dependência do mockProperties.
+// A interface da propriedade precisa incluir os novos campos
 export interface Property {
   id: string;
   propriedade_nome: string;
@@ -25,88 +25,120 @@ export interface Property {
   matricula?: string;
   ccir?: string;
   geometry: Feature<Polygon>;
+  doc_identidade_path?: string;
+  doc_terra_path?: string;
 }
 
 const PropertyRegistrationPage = () => {
-  // ✅ ESTADOS REMOVIDOS: 'properties', 'filteredProperties' e 'searchTerm' foram removidos.
-  // A lógica de lista e busca agora é interna da Sidebar.
-  
-  // Estados para controlar a UI e o fluxo de criação/edição
+  // Estados existentes
   const [isCreating, setIsCreating] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [newGeometry, setNewGeometry] = useState<Feature | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [mapViewTarget, setMapViewTarget] = useState<LatLngBoundsExpression | null>(null);
-
-  // ✅ NOVO ESTADO: O gatilho para atualizar os componentes filhos.
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Novos estados para a funcionalidade de preenchimento automático
+  const [prefilledData, setPrefilledData] = useState<Partial<Property> | null>(null);
+  const [isFetchingLocation, setIsFetchingLocation] = useState(false);
 
   const clearSelectionAndCloseForm = () => {
     setSelectedProperty(null);
     setNewGeometry(null);
     setIsFormOpen(false);
-    setIsCreating(false); // Garante que o modo de criação também seja desativado
+    setIsCreating(false);
+    setPrefilledData(null); // Limpa os dados pré-preenchidos
   };
 
   const handleStartCreation = () => {
     clearSelectionAndCloseForm();
     setIsCreating(true);
-    // O alerta foi removido para uma UX mais limpa, a UI já indica o modo de desenho.
   };
 
-  const handleGeometryDefined = useCallback((geometry: Feature | null) => {
-    if (geometry) {
-      clearSelectionAndCloseForm();
-      setNewGeometry(geometry);
+  // Função atualizada para calcular área em hectares e buscar endereço
+  const handleGeometryDefined = useCallback(async (geometry: Feature | null) => {
+    if (!geometry) return;
+
+    setIsCreating(false);
+    setIsFetchingLocation(true); // Ativa o indicador de carregamento
+    clearSelectionAndCloseForm();
+    setNewGeometry(geometry);
+
+    try {
+      // --- ETAPA DE CÁLCULO DE ÁREA ---
+      const areaInSquareMeters = turf.area(geometry);
+      const areaInHectares = areaInSquareMeters / 10000; // Conversão para hectares
+
+      // --- ETAPA DE GEOCODIFICAÇÃO REVERSA ---
+      const center = turf.centroid(geometry);
+      const [lon, lat] = center.geometry.coordinates;
+
+      // Chama a API do Nominatim (OpenStreetMap)
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
+      if (!response.ok) {
+        throw new Error('Não foi possível obter os dados de localização.');
+      }
+      const data = await response.json();
+      const address = data.address;
+
+      const municipio = address.city || address.town || address.village || 'Não encontrado';
+      const estado = address.state || 'Não encontrado';
+
+      // Armazena os dados que serão usados para preencher o formulário
+      setPrefilledData({
+        municipio: municipio,
+        estado: estado,
+        area_total: parseFloat(areaInHectares.toFixed(4)), // Armazena a área em hectares
+      });
+
       const bounds = L.geoJSON(geometry).getBounds();
       setMapViewTarget(bounds);
-      setIsFormOpen(true); 
-      setIsCreating(false);
+
+    } catch (error) {
+      console.error("Erro no preenchimento automático:", error);
+      alert("Não foi possível preencher os dados de localização automaticamente. Por favor, preencha manualmente.");
+      const areaInSquareMeters = turf.area(geometry);
+      const areaInHectares = areaInSquareMeters / 10000;
+      setPrefilledData({ area_total: parseFloat(areaInHectares.toFixed(4)) });
+    } finally {
+      setIsFetchingLocation(false);
+      setIsFormOpen(true);
     }
   }, []);
 
-  // ✅ LÓGICA ATUALIZADA: Agora busca os detalhes da propriedade da API.
-  const handleSelectProperty = async (property: Property | null) => {
-    if (property) {
+  const handleSelectProperty = async (propertyId: number) => {
+    if (propertyId) {
       setIsCreating(false);
       setNewGeometry(null);
-      
       try {
-        // Busca os dados completos para garantir que temos a geometria e todos os campos
-        const response = await fetch(`http://localhost:8000/api/properties/${property.id}`);
+        const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`);
         if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
         const fullPropertyDetails: Property = await response.json();
-
+        
         setSelectedProperty(fullPropertyDetails);
-        const bounds = L.geoJSON(fullPropertyDetails.geometry).getBounds();
-        setMapViewTarget(bounds);
-        setIsFormOpen(true); // Abre o formulário para visualização/edição
+        
+        const featureGeo = fullPropertyDetails.geometry.type === "Feature" 
+            ? fullPropertyDetails.geometry 
+            : turf.feature(fullPropertyDetails.geometry as Geometry);
 
+        const bounds = L.geoJSON(featureGeo).getBounds();
+        setMapViewTarget(bounds);
+        setIsFormOpen(true);
       } catch (error) {
         console.error(error);
         alert("Não foi possível carregar os detalhes da propriedade.");
       }
-
     } else {
       clearSelectionAndCloseForm();
     }
   };
   
-  // ✅ LÓGICA ATUALIZADA: A responsabilidade agora é apenas fechar o form e disparar a atualização.
   const handleFormSubmit = () => {
-    // A lógica de POST/PUT agora está dentro do PropertyForm.
-    // Este componente pai só precisa reagir ao sucesso.
-    
-    // 1. Fecha o formulário
     clearSelectionAndCloseForm();
-
-    // 2. Dispara o gatilho para que a Sidebar e o Mapa se atualizem
     setRefreshTrigger(currentValue => currentValue + 1);
-
     alert("Operação realizada com sucesso!");
   };
 
-  // A lógica de upload de arquivo permanece a mesma, pois é uma funcionalidade isolada.
   const handleAoiFileUpload = useCallback(async (file: File | null) => {
     if (!file) return;
     try {
@@ -143,20 +175,23 @@ const PropertyRegistrationPage = () => {
         onAoiFileUpload={handleAoiFileUpload}
         onSelectProperty={handleSelectProperty}
         selectedPropertyId={selectedProperty?.id || null}
-        // ✅ PROP ATUALIZADA: Passa o gatilho para a Sidebar
         refreshTrigger={refreshTrigger}
       />
       <main className="main-content">
+        {isFetchingLocation && (
+          <div className="loading-overlay">
+            <span>Calculando área e buscando localização...</span>
+          </div>
+        )}
         <div className="full-page-map-container">
           <MapView 
             onDrawComplete={isCreating ? handleGeometryDefined : () => {}}
             drawingEnabled={isCreating}
             activeAoi={selectedProperty?.geometry || newGeometry}
             mapViewTarget={mapViewTarget}
-            onPropertySelect={(id) => handleSelectProperty({id} as Property)}
-            // ✅ PROP ATUALIZADA: Passa o gatilho para o Mapa
+            onPropertySelect={(id) => handleSelectProperty(id)}
             refreshTrigger={refreshTrigger}
-            // As outras props permanecem, pois são de funcionalidades existentes
+            classifiedPlots={null}
             {...{
               visibleLayerUrl: null, previewLayerUrl: null, changePolygons: null,
               baseMapKey: "satellite", onBaseMapChange: () => {}, 
@@ -174,7 +209,9 @@ const PropertyRegistrationPage = () => {
             geometry={(newGeometry || selectedProperty?.geometry)!}
             onSubmit={handleFormSubmit}
             onCancel={clearSelectionAndCloseForm}
-            initialData={selectedProperty}
+            initialData={selectedProperty ? selectedProperty : prefilledData as Property}
+            isReadOnly={!!selectedProperty}
+            onSegmentationComplete={() => {}}
           />
         </aside>
       )}
