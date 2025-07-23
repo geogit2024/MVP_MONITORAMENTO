@@ -30,15 +30,12 @@ export interface Property {
 }
 
 const PropertyRegistrationPage = () => {
-  // Estados existentes
   const [isCreating, setIsCreating] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [newGeometry, setNewGeometry] = useState<Feature | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [mapViewTarget, setMapViewTarget] = useState<LatLngBoundsExpression | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-
-  // Novos estados para a funcionalidade de preenchimento automático
   const [prefilledData, setPrefilledData] = useState<Partial<Property> | null>(null);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
 
@@ -47,7 +44,7 @@ const PropertyRegistrationPage = () => {
     setNewGeometry(null);
     setIsFormOpen(false);
     setIsCreating(false);
-    setPrefilledData(null); // Limpa os dados pré-preenchidos
+    setPrefilledData(null);
   };
 
   const handleStartCreation = () => {
@@ -55,25 +52,21 @@ const PropertyRegistrationPage = () => {
     setIsCreating(true);
   };
 
-  // Função atualizada para calcular área em hectares e buscar endereço
   const handleGeometryDefined = useCallback(async (geometry: Feature | null) => {
     if (!geometry) return;
 
     setIsCreating(false);
-    setIsFetchingLocation(true); // Ativa o indicador de carregamento
+    setIsFetchingLocation(true);
     clearSelectionAndCloseForm();
     setNewGeometry(geometry);
 
     try {
-      // --- ETAPA DE CÁLCULO DE ÁREA ---
       const areaInSquareMeters = turf.area(geometry);
-      const areaInHectares = areaInSquareMeters / 10000; // Conversão para hectares
+      const areaInHectares = areaInSquareMeters / 10000;
 
-      // --- ETAPA DE GEOCODIFICAÇÃO REVERSA ---
       const center = turf.centroid(geometry);
       const [lon, lat] = center.geometry.coordinates;
 
-      // Chama a API do Nominatim (OpenStreetMap)
       const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`);
       if (!response.ok) {
         throw new Error('Não foi possível obter os dados de localização.');
@@ -84,11 +77,10 @@ const PropertyRegistrationPage = () => {
       const municipio = address.city || address.town || address.village || 'Não encontrado';
       const estado = address.state || 'Não encontrado';
 
-      // Armazena os dados que serão usados para preencher o formulário
       setPrefilledData({
         municipio: municipio,
         estado: estado,
-        area_total: parseFloat(areaInHectares.toFixed(4)), // Armazena a área em hectares
+        area_total: parseFloat(areaInHectares.toFixed(4)),
       });
 
       const bounds = L.geoJSON(geometry).getBounds();
@@ -114,11 +106,11 @@ const PropertyRegistrationPage = () => {
         const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`);
         if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
         const fullPropertyDetails: Property = await response.json();
-        
+
         setSelectedProperty(fullPropertyDetails);
-        
-        const featureGeo = fullPropertyDetails.geometry.type === "Feature" 
-            ? fullPropertyDetails.geometry 
+
+        const featureGeo = fullPropertyDetails.geometry.type === "Feature"
+            ? fullPropertyDetails.geometry
             : turf.feature(fullPropertyDetails.geometry as Geometry);
 
         const bounds = L.geoJSON(featureGeo).getBounds();
@@ -132,7 +124,7 @@ const PropertyRegistrationPage = () => {
       clearSelectionAndCloseForm();
     }
   };
-  
+
   const handleFormSubmit = () => {
     clearSelectionAndCloseForm();
     setRefreshTrigger(currentValue => currentValue + 1);
@@ -165,7 +157,7 @@ const PropertyRegistrationPage = () => {
       alert(`Erro ao processar o ficheiro: ${error.message}`);
     }
   }, [handleGeometryDefined]);
-  
+
   return (
     <div className="main-view">
       <SidebarCadastro
@@ -173,7 +165,7 @@ const PropertyRegistrationPage = () => {
         onStartCreation={handleStartCreation}
         onCancelCreation={clearSelectionAndCloseForm}
         onAoiFileUpload={handleAoiFileUpload}
-        onSelectProperty={handleSelectProperty}
+        onSelectProperty={(property) => handleSelectProperty(Number(property.id))}
         selectedPropertyId={selectedProperty?.id || null}
         refreshTrigger={refreshTrigger}
       />
