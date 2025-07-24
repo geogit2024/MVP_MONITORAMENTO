@@ -687,3 +687,29 @@ async def get_precipitation_tile():
     except Exception as e:
         print(f"❌ Erro ao gerar camada de precipitação: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    # No seu arquivo app.py (ou o arquivo principal do backend)
+
+@app.delete("/api/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Properties"])
+async def delete_property(property_id: int):
+    """Exclui uma propriedade rural existente pelo seu ID."""
+    try:
+        # Primeiro, verificar se a propriedade existe para retornar 404 se não existir
+        check_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            existing_id = connection.execute(check_query).scalar_one_or_none()
+            if existing_id is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
+
+        # Se existir, proceder com a exclusão
+        delete_query = propriedades_rurais.delete().where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            connection.execute(delete_query)
+            transaction.commit()
+        return # Retorna 204 No Content
+
+    except HTTPException as he:
+        raise he # Re-levanta HTTPExceptions já tratadas (ex: 404)
+    except Exception as e:
+        print(f"❌ Erro ao excluir propriedade (ID: {property_id}): {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao excluir a propriedade: {e}")

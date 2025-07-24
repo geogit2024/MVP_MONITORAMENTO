@@ -1,5 +1,3 @@
-// src/pages/PropertyRegistrationPage.tsx
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { Feature, FeatureCollection, Polygon, Geometry } from 'geojson';
 import L, { LatLngBoundsExpression } from 'leaflet';
@@ -144,6 +142,31 @@ const PropertyRegistrationPage = () => {
     setIsFormReadOnly(false); // Mudar para modo de edição
   };
 
+  // NOVO: Função para lidar com a exclusão de uma propriedade
+  const handleDeleteProperty = async (propertyId: string) => {
+    if (!window.confirm("Tem certeza que deseja apagar esta propriedade? Esta ação é irreversível.")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Falha ao apagar propriedade: ${response.statusText} - ${errorText}`);
+      }
+
+      alert("Propriedade apagada com sucesso!");
+      clearSelectionAndCloseForm(); // Limpa a seleção e fecha o formulário
+      setRefreshTrigger(currentValue => currentValue + 1); // Força a atualização da lista de propriedades na Sidebar
+    } catch (error: any) {
+      console.error("Erro ao apagar propriedade:", error);
+      alert(error.message || "Erro de conexão ao apagar propriedade.");
+    }
+  };
+
   const handleAoiFileUpload = useCallback(async (file: File | null) => {
     if (!file) return;
     try {
@@ -211,7 +234,7 @@ const PropertyRegistrationPage = () => {
         <aside className="form-sidebar-right">
           <PropertyForm
             key={selectedProperty?.id || 'new-property-form'}
-            // CORREÇÃO APLICADA AQUI: Garante que um objeto Feature válido é sempre passado.
+            // Garante que um objeto Feature válido é sempre passado.
             // Se newGeometry e selectedProperty?.geometry são nulos/indefinidos,
             // um Feature de polígono vazio será usado como fallback.
             geometry={
@@ -224,6 +247,8 @@ const PropertyRegistrationPage = () => {
             initialData={selectedProperty ? selectedProperty : prefilledData as Property}
             isReadOnly={isFormReadOnly}
             onEdit={handleEditForm}
+            // CORREÇÃO AQUI: Garante que onDelete sempre passa uma função
+            onDelete={selectedProperty ? handleDeleteProperty : () => { /* no-op */ }} 
             onSegmentationComplete={() => {}}
           />
         </aside>

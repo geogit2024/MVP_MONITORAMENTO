@@ -1,17 +1,18 @@
 // src/components/PropertyForm.tsx
 
-import React, { useState } from 'react';
-import { Feature, Geometry } from 'geojson'; // Certifique-se de que Geometry está importado
+import React, { useState, useEffect } from 'react'; // Importe useEffect aqui
+import { Feature, Geometry } from 'geojson'; 
 import './PropertyForm.css';
 import { Property } from '../../types';
 
 interface PropertyFormProps {
-  geometry?: Feature | Geometry; // <-- Pode ser Feature OU Geometry diretamente
+  geometry?: Feature | Geometry;
   onSubmit: (formData: any) => void;
   onCancel: () => void;
   initialData?: Property | null;
   isReadOnly: boolean;
   onEdit?: () => void;
+  onDelete?: (propertyId: string) => void; // Certifique-se de que esta prop está definida na interface
   onSegmentationComplete?: () => void;
 }
 
@@ -22,9 +23,21 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
   initialData,
   isReadOnly,
   onEdit,
+  onDelete, // Certifique-se de desestruturar onDelete aqui
   onSegmentationComplete,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
+
+  // NOVO: console.log para depurar as props no carregamento do componente
+  useEffect(() => {
+    console.log('--- PropertyForm Props State ---');
+    console.log('isReadOnly:', isReadOnly);
+    console.log('initialData:', initialData);
+    console.log('initialData.id:', initialData?.id);
+    console.log('onDelete (type):', typeof onDelete);
+    console.log('------------------------------');
+  }, [isReadOnly, initialData, onDelete]);
+
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -32,23 +45,18 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
 
     let geometryToProcess: Geometry | null = null;
 
-    // Se 'geometry' (a prop) é uma Feature (com "type": "Feature"), pegue sua propriedade 'geometry'.
     if (geometry && (geometry as Feature).type === 'Feature' && (geometry as Feature).geometry) {
       geometryToProcess = (geometry as Feature).geometry;
     } 
-    // Se 'geometry' (a prop) é diretamente uma Geometry (e.g., "type": "Polygon"), use-a diretamente.
     else if (geometry && ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(geometry.type as any)) {
       geometryToProcess = geometry as Geometry;
     }
-    // Caso contrário, tenta pegar do initialData
     else if (initialData?.geometry && (initialData.geometry as Feature).type === 'Feature' && (initialData.geometry as Feature).geometry) {
       geometryToProcess = (initialData.geometry as Feature).geometry;
     }
-    // Caso contrário, tenta pegar do initialData se for uma Geometry direta
     else if (initialData?.geometry && ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(initialData.geometry.type as any)) {
         geometryToProcess = initialData.geometry as Geometry;
     }
-
 
     if (!geometryToProcess) {
       console.error("Erro: A geometria da propriedade não está definida para salvar.");
@@ -69,10 +77,9 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
       incra_codigo: form.incra_codigo.value || null,
       matricula: form.matricula.value || null,
       ccir: form.ccir.value || null,
-      geometry: geometryToProcess, // Usa a geometria processada e validada
+      geometry: geometryToProcess,
     };
 
-    // ... (restante do código do handleSubmit, como a chamada fetch) ...
     const isEditing = initialData && initialData.id;
     let url = isEditing
       ? `http://localhost:8000/api/properties/${initialData.id}`
@@ -265,18 +272,40 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
 
       <div className="form-actions">
         {isReadOnly && initialData && (
-          <button
-            type="button"
-            onClick={() => {
-              if (onEdit) {
-                onEdit(); // importante para liberar edição no componente pai
-              }
-            }}
-            className="button-secondary"
-            disabled={isLoading}
-          >
-            Editar
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                if (onEdit) {
+                  onEdit(); // importante para liberar edição no componente pai
+                }
+              }}
+              className="button-secondary"
+              disabled={isLoading}
+            >
+              Editar
+            </button>
+
+            {/* CONSOLE.LOG ADICIONADO AQUI PARA DEPURAR A RENDERIZAÇÃO DO BOTÃO APAGAR */}
+            {console.log('Condições para botão Apagar:', {
+              isReadOnly: isReadOnly,
+              initialDataExists: !!initialData,
+              initialDataId: initialData?.id,
+              onDeleteIsFunction: typeof onDelete === 'function'
+            })}
+
+            {/* Botão Apagar Registro - SÓ SERÁ RENDERIZADO SE TODAS AS CONDIÇÕES FOREM TRUE */}
+            {typeof onDelete === 'function' && (
+              <button
+                type="button"
+                onClick={() => initialData?.id && onDelete(initialData.id)}
+                className="button-delete"
+                disabled={isLoading}
+              >
+                Apagar Registro
+              </button>
+            )}
+          </>
         )}
 
         {!isReadOnly && (
