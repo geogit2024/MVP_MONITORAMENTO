@@ -1,11 +1,12 @@
 import os
 import ee
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import date
 import json
+import asyncio # Importar asyncio para o tratamento de CancelledError
 
 # --------------------------------------------------------------------------
 # IMPORTAÇÕES PARA BANCO DE DADOS
@@ -87,10 +88,8 @@ propriedades_rurais = Table(
     Column('email', String(100), nullable=False),
     Column('matricula', String(50)),
     Column('ccir', String(50)),
-    # --- ALTERAÇÕES ADICIONADAS ABAIXO ---
     Column('doc_identidade_path', String(255), nullable=True),
     Column('doc_terra_path', String(255), nullable=True),
-    # --- FIM DAS ALTERAÇÕES ---
     Column('geom', Geometry('POLYGON', srid=4326)),
 )
 
@@ -101,8 +100,8 @@ async def startup_event():
         with engine.connect() as connection:
             result = connection.execute(text("SELECT extname FROM pg_extension WHERE extname = 'postgis'"))
             if result.scalar_one_or_none() is None:
-                 print("🔴 ALERTA: Extensão PostGIS não encontrada no banco. A API pode falhar.")
-                 print("   -> Conecte-se ao seu DB e execute: CREATE EXTENSION postgis;")
+                print("🔴 ALERTA: Extensão PostGIS não encontrada no banco. A API pode falhar.")
+                print("   -> Conecte-se ao seu DB e execute: CREATE EXTENSION postgis;")
         metadata.create_all(engine)
         print("✅ Tabelas do banco de dados verificadas/criadas com sucesso.")
     except Exception as e:
@@ -155,9 +154,8 @@ class ChangeDetectionRequest(BaseModel):
 class ChangeDetectionResponse(BaseModel):
     changeGeoJson: Dict[str, Any]
     differenceImageUrl: Optional[str] = None
-    # ✅ NOVOS CAMPOS PARA AS ÁREAS
-    gainAreaHa: float  # Área de ganho em hectares
-    lossAreaHa: float  # Área de perda em hectares
+    gainAreaHa: float
+    lossAreaHa: float
 
 class DownloadInfoRequest(BaseModel):
     imageId: str
@@ -179,7 +177,7 @@ class PropertyCreate(BaseModel):
     email: str
     matricula: Optional[str] = None
     ccir: Optional[str] = None
-    geometry: Dict[str, Any]
+    geometry: Dict[str, Any] # Geometria como um objeto GeoJSON
 
 class PropertyDetails(BaseModel):
     id: int
@@ -193,7 +191,11 @@ class PropertyDetails(BaseModel):
     email: str
     matricula: Optional[str] = None
     ccir: Optional[str] = None
-    geometry: Dict[str, Any]
+    geometry: Dict[str, Any] # Geometria como um objeto GeoJSON
+    # Estes campos podem ser adicionados se você precisar retorná-los,
+    # mas não são obrigatórios para a criação/atualização se o upload for separado.
+    doc_identidade_path: Optional[str] = None
+    doc_terra_path: Optional[str] = None
 
 class PropertyProperties(BaseModel):
     id: int
@@ -244,22 +246,25 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
                 calculated[name] = index_image
             except Exception as e:
                 print(f"Aviso: Não foi possível calcular o índice '{name}'. Erro: {e}")
+                # Não adicione ao 'calculated' se falhou
+    
     bands = {
         'NIR': scaled_image.select('SR_B5' if is_landsat else 'B8'),
         'RED': scaled_image.select('SR_B4' if is_landsat else 'B4'),
         'GREEN': scaled_image.select('SR_B3' if is_landsat else 'B3'),
         'BLUE': scaled_image.select('SR_B2' if is_landsat else 'B2'),
-        'RE1': scaled_image.select('B5') if not is_landsat else None,
-        'RE2': scaled_image.select('B6') if not is_landsat else None,
-        'RE3': scaled_image.select('B7') if not is_landsat else None,
+        'RE1': scaled_image.select('B5') if not is_landsat else ee.Image(0).rename('B5'),
+        'RE2': scaled_image.select('B6') if not is_landsat else ee.Image(0).rename('B6'),
+        'RE3': scaled_image.select('B7') if not is_landsat else ee.Image(0).rename('B7'),
     }
+
     add_index('NDVI', '(NIR - RED) / (NIR + RED)', bands)
     add_index('SAVI', '((NIR - RED) / (NIR + RED + 0.5)) * 1.5', bands)
     add_index('MSAVI', '(2 * NIR + 1 - ((2 * NIR + 1)**2 - 8 * (NIR - RED))**0.5) / 2', bands)
     add_index('SR', 'NIR / RED', bands)
     add_index('VARI', '(GREEN - RED) / (GREEN + RED - BLUE)', bands)
     add_index('Green NDVI', '(NIR - GREEN) / (NIR + GREEN)', bands)
-    add_index('CI Green', '(NIR / GREEN) - 1', bands)
+    add_index('CI Green', '(NIR / RE1) - 1', bands)
     add_index('PVI', '(NIR - 0.3 * RED - 0.5)', bands)
     add_index('TSAVI', '(0.9 * (NIR - 0.9 * RED - 3)) / (RED + 0.9 * NIR - 0.9 * 3 + 1.5 * (1 + 0.9**2))', bands)
     add_index('MTVI2', '1.5 * (1.2 * (NIR - GREEN) - 2.5 * (RED - GREEN)) / (((2 * NIR + 1)**2 - (6 * NIR - 5 * RED**0.5) - 0.5))**0.5', bands)
@@ -273,77 +278,34 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
 # ENDPOINTS DA API
 # --------------------------------------------------------------------------
 
-# === ENDPOINTS DE PROPRIEDADES ===
-# ✅ Adicione estas importações no topo do seu arquivo main.py
-from fastapi import File, UploadFile, Form
-import shutil
-import uuid
-
-# ✅ Garanta que a pasta de uploads seja criada ao iniciar
+# Configuração de uploads (mantida, mas a lógica de recebimento de arquivos está separada agora)
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ... (resto do seu código)
-
-@app.post("/api/properties", status_code=201, response_model=PropertyDetails, tags=["Properties"])
-def create_property(
-    # ✅ A assinatura da função foi alterada.
-    # Os campos de texto agora são recebidos com Form(...)
-    propriedade_nome: str = Form(...),
-    municipio: str = Form(...),
-    estado: str = Form(...),
-    area_total: float = Form(...),
-    proprietario_nome: str = Form(...),
-    cpf_cnpj: str = Form(...),
-    email: str = Form(...),
-    geometry: str = Form(...), # A geometria virá como uma string JSON
-    incra_codigo: Optional[str] = Form(None),
-    matricula: Optional[str] = Form(None),
-    ccir: Optional[str] = Form(None),
-    # ✅ Os arquivos são recebidos com UploadFile e File(...)
-    doc_identidade: Optional[UploadFile] = File(None),
-    doc_terra: Optional[UploadFile] = File(None)
+# Endpoint para CRIAR propriedade (POST)
+@app.post("/api/properties", status_code=status.HTTP_201_CREATED, response_model=PropertyDetails, tags=["Properties"])
+async def create_property(
+    # ✅ MUDANÇA PRINCIPAL: Recebe um objeto PropertyCreate completo via corpo JSON
+    property_data: PropertyCreate
 ):
-    """Recebe os dados do formulário, salva os anexos e persiste no banco de dados."""
-    
-    # ✅ Bloco para salvar o arquivo de identidade, se ele for enviado
-    doc_identidade_path = None
-    if doc_identidade and doc_identidade.filename:
-        # Gera um nome de arquivo único para evitar sobreposições e problemas de segurança
-        unique_filename = f"{uuid.uuid4()}-{doc_identidade.filename}"
-        doc_identidade_path = os.path.join(UPLOAD_DIR, unique_filename)
-        # Salva o arquivo no disco na pasta 'uploads'
-        with open(doc_identidade_path, "wb") as buffer:
-            shutil.copyfileobj(doc_identidade.file, buffer)
-
-    # ✅ Bloco para salvar o arquivo do documento da terra, se ele for enviado
-    doc_terra_path = None
-    if doc_terra and doc_terra.filename:
-        unique_filename = f"{uuid.uuid4()}-{doc_terra.filename}"
-        doc_terra_path = os.path.join(UPLOAD_DIR, unique_filename)
-        with open(doc_terra_path, "wb") as buffer:
-            shutil.copyfileobj(doc_terra.file, buffer)
-            
+    """Recebe os dados da propriedade (JSON) e a persiste no banco de dados."""
     try:
-        # ✅ Converte a string da geometria de volta para um dicionário Python
-        geom_dict = json.loads(geometry)
-        geom_shape = shape(geom_dict)
+        geom_shape = shape(property_data.geometry) # Já é um dicionário Python
         
-        # ✅ A query de inserção agora inclui os caminhos dos arquivos
         insert_query = propriedades_rurais.insert().values(
-            propriedade_nome=propriedade_nome,
-            incra_codigo=incra_codigo,
-            municipio=municipio,
-            estado=estado,
-            area_total=area_total,
-            proprietario_nome=proprietario_nome,
-            cpf_cnpj=cpf_cnpj,
-            email=email,
-            matricula=matricula,
-            ccir=ccir,
+            propriedade_nome=property_data.propriedade_nome,
+            incra_codigo=property_data.incra_codigo,
+            municipio=property_data.municipio,
+            estado=property_data.estado,
+            area_total=property_data.area_total,
+            proprietario_nome=property_data.proprietario_nome,
+            cpf_cnpj=property_data.cpf_cnpj,
+            email=property_data.email,
+            matricula=property_data.matricula,
+            ccir=property_data.ccir,
             geom=f'SRID=4326;{geom_shape.wkt}',
-            doc_identidade_path=doc_identidade_path, # Salva o caminho no banco
-            doc_terra_path=doc_terra_path           # Salva o caminho no banco
+            doc_identidade_path=None, # Caminhos de arquivo não são tratados aqui via JSON
+            doc_terra_path=None      # Precisaria de endpoint separado ou FormData
         ).returning(propriedades_rurais.c.id)
 
         with engine.connect() as connection:
@@ -352,17 +314,74 @@ def create_property(
             new_id = result.scalar_one()
             transaction.commit()
             
-            # Busca os dados completos para retornar o objeto criado
-            return get_property_by_id(new_id)
+            return await get_property_by_id(new_id)
 
+
+    except asyncio.CancelledError:
+        print("⚠️  Criação de propriedade cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição de criação de propriedade foi cancelada.")
     except Exception as e:
         print(f"❌ Erro ao salvar propriedade: {e}")
         if "UniqueViolation" in str(e) or "duplicate key value" in str(e):
-            raise HTTPException(status_code=409, detail="Já existe uma propriedade cadastrada com este CPF/CNPJ.")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno ao salvar a propriedade: {e}")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe uma propriedade cadastrada com este CPF/CNPJ.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao salvar a propriedade: {e}")
     
+
+# ✅ Endpoint para ATUALIZAR propriedade (PUT)
+@app.put("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
+async def update_property(
+    property_id: int,
+    # ✅ MUDANÇA PRINCIPAL: Recebe um objeto PropertyCreate completo via corpo JSON
+    property_update_data: PropertyCreate
+):
+    """Atualiza os dados de uma propriedade rural existente pelo seu ID."""
+    try:
+        existing_property_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            existing_id = connection.execute(existing_property_query).scalar_one_or_none()
+            if existing_id is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
+
+        geom_shape = shape(property_update_data.geometry)
+        
+        update_values = {
+            "propriedade_nome": property_update_data.propriedade_nome,
+            "incra_codigo": property_update_data.incra_codigo,
+            "municipio": property_update_data.municipio,
+            "estado": property_update_data.estado,
+            "area_total": property_update_data.area_total,
+            "proprietario_nome": property_update_data.proprietario_nome,
+            "cpf_cnpj": property_update_data.cpf_cnpj,
+            "email": property_update_data.email,
+            "matricula": property_update_data.matricula,
+            "ccir": property_update_data.ccir,
+            "geom": f'SRID=4326;{geom_shape.wkt}'
+            # caminhos de arquivo não são atualizados aqui
+        }
+
+        update_query = propriedades_rurais.update().where(propriedades_rurais.c.id == property_id).values(**update_values)
+
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            connection.execute(update_query)
+            transaction.commit()
+            
+            return await get_property_by_id(property_id)
+
+    except asyncio.CancelledError:
+        print(f"⚠️  Atualização de propriedade (ID: {property_id}) cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição de atualização foi cancelada.")
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Erro ao atualizar propriedade (ID: {property_id}): {e}")
+        if "UniqueViolation" in str(e) or "duplicate key value" in str(e):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe outra propriedade cadastrada com este CPF/CNPJ.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao atualizar a propriedade: {e}")
+
+# === ENDPOINTS DE LEITURA (GET) ===
 @app.get("/api/properties", response_model=FeatureCollection, tags=["Properties"])
-def get_all_properties():
+async def get_all_properties():
     """Retorna todas as propriedades cadastradas como um GeoJSON FeatureCollection."""
     query = select(
         propriedades_rurais.c.id,
@@ -386,44 +405,70 @@ def get_all_properties():
                     }
                 })
         return {"type": "FeatureCollection", "features": features}
+    except asyncio.CancelledError:
+        print("⚠️  Busca de todas as propriedades cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao buscar propriedades: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao buscar propriedades.")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao buscar propriedades.")
 
 
 @app.get("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
-def get_property_by_id(property_id: int):
-    """Busca e retorna os detalhes completos de uma única propriedade pelo seu ID."""
+async def get_property_by_id(property_id: int):
+    """
+    Busca e retorna os detalhes completos de uma única propriedade pelo seu ID.
+    """
     query = select(
         propriedades_rurais,
         ST_AsGeoJSON(propriedades_rurais.c.geom).label('geometry_geojson')
     ).where(propriedades_rurais.c.id == property_id)
+
     try:
         with engine.connect() as connection:
             result = connection.execute(query).mappings().first()
+
             if result is None:
-                raise HTTPException(status_code=404, detail="Propriedade não encontrada.")
-            
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Propriedade não encontrada."
+                )
+
             property_data = dict(result)
-            property_data['geometry'] = json.loads(property_data.pop('geometry_geojson'))
-            
-            return property_data
+            geometry_geojson = property_data.pop('geometry_geojson', None)
+
+            if geometry_geojson:
+                if isinstance(geometry_geojson, (bytes, bytearray)):
+                    geometry_geojson = geometry_geojson.decode('utf-8')
+                property_data['geometry'] = json.loads(geometry_geojson)
+            else:
+                property_data['geometry'] = None
+
+            return PropertyDetails(**property_data)
+
+    except asyncio.CancelledError:
+        print(f"⚠️  Busca de propriedade por ID ({property_id}) cancelada.")
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="A requisição foi cancelada ou excedeu o tempo limite."
+        )
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        print(f"❌ Erro ao buscar propriedade por ID: {e}")
-        raise HTTPException(status_code=500, detail="Erro interno ao buscar detalhes da propriedade.")
+        print(f"❌ Erro ao buscar propriedade: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno ao buscar propriedade."
+        )
+
 
 
 # === ENDPOINTS DO GOOGLE EARTH ENGINE ===
 @app.post("/api/earth-images/search", response_model=List[ImageInfo], tags=["Google Earth Engine"])
-def search_earth_images(request: SearchRequest):
+async def search_earth_images(request: SearchRequest):
     """Busca imagens de satélite e retorna metadados e URL de thumbnail."""
     try:
         geometry = create_ee_geometry_from_json(request.polygon)
         collection_name = SATELLITE_COLLECTIONS.get(request.satellite)
         if not collection_name:
-            raise HTTPException(status_code=400, detail="Satélite inválido.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Satélite inválido.")
         is_landsat = "LANDSAT" in request.satellite
         cloud_property = 'CLOUD_COVER' if is_landsat else 'CLOUDY_PIXEL_PERCENTAGE'
         image_collection = (
@@ -433,9 +478,15 @@ def search_earth_images(request: SearchRequest):
             .filter(ee.Filter.lt(cloud_property, request.cloudPct))
             .sort('system:time_start')
         )
-        images_list_info = image_collection.getInfo()['features']
+        
+        # --- CORREÇÃO AQUI: Await o resultado de asyncio.to_thread antes de acessar 'features' ---
+        images_info_result = await asyncio.to_thread(image_collection.getInfo)
+        images_list_info = images_info_result['features']
+        # --- FIM DA CORREÇÃO ---
+        
         if not images_list_info:
             return []
+        
         results = []
         vis_params_rgb = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
         for img_info in images_list_info:
@@ -443,7 +494,8 @@ def search_earth_images(request: SearchRequest):
             image = ee.Image(image_id)
             scaled_image = get_image_bands(image, is_landsat)
             dt = date.fromtimestamp(img_info['properties']['system:time_start'] / 1000)
-            thumbnail_url = scaled_image.visualize(**vis_params_rgb).getThumbURL({
+            
+            thumbnail_url = await asyncio.to_thread(scaled_image.visualize(**vis_params_rgb).getThumbURL, {
                 'dimensions': 256,
                 'region': geometry.bounds(),
                 'format': 'jpg'
@@ -454,14 +506,17 @@ def search_earth_images(request: SearchRequest):
                 thumbnailUrl=thumbnail_url
             ))
         return results
+    except asyncio.CancelledError:
+        print(f"⚠️  Requisição para {request.satellite} (busca de imagens) foi cancelada pelo cliente ou timeout.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         print(f"❌ Erro inesperado na busca de imagens: {e}")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
 @app.post("/api/earth-images/preview", tags=["Google Earth Engine"])
-def get_image_preview_layer(request: ImagePreviewRequest):
+async def get_image_preview_layer(request: ImagePreviewRequest):
     """Gera uma camada de visualização em cores reais para uma imagem específica."""
     try:
         image = ee.Image(request.imageId)
@@ -471,18 +526,21 @@ def get_image_preview_layer(request: ImagePreviewRequest):
         vis_params = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
         clipped_image = scaled_image.clip(geometry)
         visualized_image = clipped_image.visualize(**vis_params)
-        map_id = visualized_image.getMapId()
+        map_id = await asyncio.to_thread(visualized_image.getMapId)
         return {"tileUrl": map_id['tile_fetcher'].url_format}
+    except asyncio.CancelledError:
+        print("⚠️  Geração de preview cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao gerar preview: {e}")
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar preview: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao gerar preview: {e}")
 
 @app.post("/api/earth-images/indices", response_model=IndicesResponse, tags=["Google Earth Engine"])
-def generate_indices(request: IndicesRequest):
+async def generate_indices(request: IndicesRequest):
     """Calcula múltiplos índices e retorna URLs para visualização e download."""
     try:
         if not request.indices:
-            raise HTTPException(status_code=400, detail="A lista de índices não pode ser vazia.")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A lista de índices não pode ser vazia.")
         is_landsat = "LANDSAT" in request.satellite
         geometry = create_ee_geometry_from_json(request.polygon)
         image = ee.Image(request.imageId)
@@ -491,8 +549,8 @@ def generate_indices(request: IndicesRequest):
         vis_params_index = {'min': 0, 'max': 1, 'palette': ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641']}
         for index_name, index_image in calculated_indices.items():
             clipped_index_image = index_image.clip(geometry)
-            map_id = clipped_index_image.getMapId(vis_params_index)
-            download_url = clipped_index_image.getDownloadURL({
+            map_id = await asyncio.to_thread(clipped_index_image.getMapId, vis_params_index)
+            download_url = await asyncio.to_thread(clipped_index_image.getDownloadURL, {
                 'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
             })
             results.append(IndexResult(
@@ -500,17 +558,36 @@ def generate_indices(request: IndicesRequest):
                 imageUrl=map_id['tile_fetcher'].url_format,
                 downloadUrl=download_url
             ))
-        bounds_coords = geometry.bounds().getInfo()['coordinates'][0]
-        bounds_for_response = [[coord[1], coord[0]] for coord in bounds_coords]
+        
+        # --- CORREÇÃO APLICADA AQUI: Adicionado verificação de segurança ao acessar 'coordinates' ---
+        bounds_info = await asyncio.to_thread(geometry.bounds().getInfo)
+        
+        bounds_for_response = []
+        if bounds_info and 'coordinates' in bounds_info and bounds_info['coordinates']:
+            # Assume que bounds_info['coordinates'] é uma lista de listas (e.g., [[lon, lat], ...])
+            # e que o primeiro elemento [0] contém a lista principal de coordenadas do polígono.
+            bounds_coords = bounds_info['coordinates'][0] 
+            bounds_for_response = [[coord[1], coord[0]] for coord in bounds_coords]
+        else:
+            # Caso não haja coordenadas válidas, definir um valor padrão ou levantar um erro.
+            # Um valor padrão pode ser útil para evitar falhas totais no frontend.
+            print("Aviso: Geometria de limites não contém coordenadas válidas. Retornando limites padrão.")
+            # Exemplo de limites padrão (mundo inteiro, ou um valor seguro)
+            bounds_for_response = [[-90.0, -180.0], [90.0, 180.0]] 
+        # --- FIM DA CORREÇÃO ---
+
         return IndicesResponse(bounds=bounds_for_response, results=results)
+    except asyncio.CancelledError:
+        print("⚠️  Geração de índices cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         print(f"❌ Erro inesperado ao gerar índices: {e}")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
-def detect_changes(request: ChangeDetectionRequest):
+async def detect_changes(request: ChangeDetectionRequest):
     """
     Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas
     e retorna os resultados.
@@ -532,39 +609,27 @@ def detect_changes(request: ChangeDetectionRequest):
         
         change_map = ee.Image(0).where(gain_mask, 2).where(loss_mask, 1).selfMask()
 
-        # Converte a imagem de mudança para vetores (polígonos)
         change_vectors = change_map.reduceToVectors(
             geometry=geometry, scale=30, geometryType='polygon',
             eightConnected=False, labelProperty='change_type', maxPixels=1e10
         )
 
-        # ✅ --- INÍCIO DA NOVA LÓGICA DE SUAVIZAÇÃO E CÁLCULO ---
-
-        # 1. SUAVIZAÇÃO: Aplica um buffer para suavizar as bordas dos polígonos
-        # Um valor pequeno como 10 metros é geralmente suficiente.
         def smooth_feature(feature):
             return feature.buffer(10, maxError=1).buffer(-10, maxError=1)
 
         smoothed_vectors = change_vectors.map(smooth_feature)
 
-        # 2. CÁLCULO DE ÁREA: Separa os polígonos de ganho e perda
         gain_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 2))
         loss_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 1))
 
-        # Calcula a área total para cada classe e converte de m² para hectares
-        gain_area_ha = gain_polygons.geometry().area(maxError=1).divide(10000)
-        loss_area_ha = loss_polygons.geometry().area(maxError=1).divide(10000)
-
-        # Obtém os valores calculados como números para enviar na resposta
-        gain_area_value = gain_area_ha.getInfo() or 0.0
-        loss_area_value = loss_area_ha.getInfo() or 0.0
+        # Obtenção dos valores de área (pode ser bloqueante, usar to_thread)
+        gain_area_value = await asyncio.to_thread(gain_polygons.geometry().area(maxError=1).divide(10000).getInfo) or 0.0
+        loss_area_value = await asyncio.to_thread(loss_polygons.geometry().area(maxError=1).divide(10000).getInfo) or 0.0
         
-        # --- FIM DA NOVA LÓGICA ---
-
-        change_geojson = smoothed_vectors.getInfo()
+        change_geojson = await asyncio.to_thread(smoothed_vectors.getInfo)
 
         diff_vis_params = {'min': -0.5, 'max': 0.5, 'palette': ['red', '#ffcccb', 'white', '#90ee90', 'green']}
-        diff_map_id = ndvi_difference.clip(geometry).getMapId(diff_vis_params)
+        diff_map_id = await asyncio.to_thread(ndvi_difference.clip(geometry).getMapId, diff_vis_params)
         diff_url = diff_map_id['tile_fetcher'].url_format
 
         return ChangeDetectionResponse(
@@ -573,22 +638,24 @@ def detect_changes(request: ChangeDetectionRequest):
             gainAreaHa=gain_area_value,
             lossAreaHa=loss_area_value
         )
-
+    except asyncio.CancelledError:
+        print("⚠️  Detecção de mudanças cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao detectar mudanças: {e}")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
 
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
-def get_download_info(request: DownloadInfoRequest):
+async def get_download_info(request: DownloadInfoRequest):
     """Gera e retorna uma URL de download para a imagem original (GeoTIFF) recortada pela AOI."""
     try:
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
         clipped_image = image.clip(geometry)
-        image_date_str = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd').getInfo()
+        image_date_str = await asyncio.to_thread(ee.Date(image.get('system:time_start')).format('YYYY-MM-dd').getInfo)
         file_name = f"{request.imageId.split('/')[-1]}_{image_date_str}.tif"
-        download_url = clipped_image.getDownloadURL({
+        download_url = await asyncio.to_thread(clipped_image.getDownloadURL, {
             'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
         })
         return DownloadInfoResponse(
@@ -596,12 +663,15 @@ def get_download_info(request: DownloadInfoRequest):
             downloadUrl=download_url,
             fileName=file_name
         )
+    except asyncio.CancelledError:
+        print("⚠️  Geração de URL de download cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao gerar URL de download: {e}")
-        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno ao obter informações para download: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao obter informações para download: {e}")
 
 @app.get("/api/earth-images/precipitation-tiles", tags=["Google Earth Engine"])
-def get_precipitation_tile():
+async def get_precipitation_tile():
     """Retorna uma camada de precipitação média para um período fixo."""
     try:
         today = ee.Date(date.today())
@@ -609,8 +679,11 @@ def get_precipitation_tile():
         end_of_month = start_of_month.advance(1, 'month')
         image = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY").filterDate(start_of_month, end_of_month).mean()
         vis_params = {'min': 0, 'max': 50, 'palette': ['white', 'blue', 'purple']}
-        map_id_dict = image.visualize(**vis_params).getMapId()
+        map_id_dict = await asyncio.to_thread(image.visualize(**vis_params).getMapId)
         return {"tileUrl": map_id_dict['tile_fetcher'].url_format}
+    except asyncio.CancelledError:
+        print("⚠️  Geração de camada de precipitação cancelada.")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao gerar camada de precipitação: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

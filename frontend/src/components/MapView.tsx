@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, useMap, GeoJSON } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
-import { Feature, FeatureCollection } from 'geojson'; // Importa FeatureCollection
+import { Feature, FeatureCollection } from 'geojson';
 import FirmsDataLayer from './FirmsDataLayer';
 import PrecipitationLayer from './PrecipitationLayer';
 import 'leaflet/dist/leaflet.css';
@@ -13,11 +13,10 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 
-// Configuração do ícone padrão do Leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
-// Definição de Ícones e Camadas Base
+// ✅ EXPORTAÇÃO DO fireIcon
 export const fireIcon = new L.Icon({
   iconUrl: 'https://cdn-icons-png.flaticon.com/512/482/482541.png',
   iconSize: [24, 24],
@@ -43,7 +42,6 @@ const baseMaps = {
   }
 };
 
-// Componente para animar o mapa (sem alterações)
 const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) => {
   const map = useMap();
   useEffect(() => {
@@ -52,7 +50,6 @@ const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) 
   return null;
 };
 
-// Componente de desenho controlado por prop (sem alterações)
 const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete: (geojson: Feature) => void, drawingEnabled: boolean }) => {
   const map = useMap();
 
@@ -92,7 +89,7 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
       map.off('pm:create', handleCreate);
     };
   }, [map, onDrawComplete]);
-  
+
   useEffect(() => {
     if (!map.pm) return;
     if (drawingEnabled) {
@@ -105,32 +102,40 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
   return null;
 };
 
-// Componente para gerenciar camadas de Tile dinâmicas (sem alterações)
-const DynamicTileLayer = ({ url, zIndex = 10, opacity = 0.8, attribution }: { url: string | null; zIndex?: number; opacity?: number; attribution?: string }) => {
-    const map = useMap();
-    const layerRef = useRef<L.TileLayer | null>(null);
+const DynamicTileLayer = ({
+  url,
+  zIndex = 10,
+  opacity = 0.8,
+  attribution
+}: {
+  url: string | null;
+  zIndex?: number;
+  opacity?: number;
+  attribution?: string;
+}) => {
+  const map = useMap();
+  const layerRef = useRef<L.TileLayer | null>(null);
 
-    useEffect(() => {
-        if (layerRef.current) {
-            map.removeLayer(layerRef.current);
-            layerRef.current = null;
-        }
-        if (url) {
-            const newLayer = L.tileLayer(url, { zIndex, opacity, attribution });
-            newLayer.addTo(map);
-            layerRef.current = newLayer;
-        }
-        return () => {
-            if (layerRef.current && map.hasLayer(layerRef.current)) {
-                map.removeLayer(layerRef.current);
-            }
-        };
-    }, [url, map, zIndex, opacity, attribution]);
+  useEffect(() => {
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current);
+      layerRef.current = null;
+    }
+    if (url) {
+      const newLayer = L.tileLayer(url, { zIndex, opacity, attribution });
+      newLayer.addTo(map);
+      layerRef.current = newLayer;
+    }
+    return () => {
+      if (layerRef.current && map.hasLayer(layerRef.current)) {
+        map.removeLayer(layerRef.current);
+      }
+    };
+  }, [url, map, zIndex, opacity, attribution]);
 
-    return null;
+  return null;
 };
 
-// Interface de props do componente principal
 interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
   visibleLayerUrl: string | null;
@@ -145,8 +150,8 @@ interface MapViewProps {
   differenceLayerZIndex: number;
   previewLayerZIndex: number;
   drawingEnabled: boolean;
-  onPropertySelect: (id: number) => void; // ✅ NOVO: Função para notificar seleção
-  refreshTrigger: any; // ✅ NOVO: Gatilho para atualizar a lista de propriedades
+  onPropertySelect: (id: string) => void;
+  refreshTrigger: any;
 }
 
 export default function MapView({
@@ -163,65 +168,58 @@ export default function MapView({
   differenceLayerZIndex,
   previewLayerZIndex,
   drawingEnabled,
-  onPropertySelect, // ✅ NOVO: Prop recebida
-  refreshTrigger,   // ✅ NOVO: Prop recebida
+  onPropertySelect,
+  refreshTrigger
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
-  
-  // ✅ NOVO: Estado para armazenar as propriedades carregadas do banco
   const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
 
-  // ✅ NOVO: Função para buscar as propriedades da API
   const fetchProperties = async () => {
     try {
       const response = await fetch('http://localhost:8000/api/properties');
-      if (!response.ok) {
-        throw new Error('Falha ao carregar propriedades do servidor.');
-      }
+      if (!response.ok) throw new Error('Falha ao carregar propriedades.');
       const data: FeatureCollection = await response.json();
       setPropertiesData(data);
     } catch (error) {
       console.error(error);
-      // Aqui você poderia adicionar um toast ou notificação de erro
     }
   };
 
-  // ✅ NOVO: Efeito para carregar as propriedades na montagem do componente e quando o gatilho for acionado
   useEffect(() => {
     fetchProperties();
   }, [refreshTrigger]);
 
-  // Estilos para as diferentes camadas GeoJSON
   const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
-  const propertyLayerStyle = { color: '#007bff', weight: 2, opacity: 0.8, fillColor: '#007bff', fillOpacity: 0.2 };
+  const propertyLayerStyle = {
+    color: '#007bff',
+    weight: 2,
+    opacity: 0.8,
+    fillColor: '#007bff',
+    fillOpacity: 0.2
+  };
 
   const changePolygonStyle = (feature?: Feature) => {
     const type = parseInt(String(feature?.properties?.change_type), 10);
-    if (type === 2) {
+    if (type === 2)
       return { fillColor: '#00ff00', color: '#006400', weight: 1.5, fillOpacity: 0.7 };
-    } else if (type === 1) {
+    if (type === 1)
       return { fillColor: '#ff0000', color: '#8b0000', weight: 1.5, fillOpacity: 0.7 };
-    }
     return { color: '#808080', weight: 1, fillOpacity: 0.5 };
   };
-  
-  // ✅ NOVO: Função para lidar com eventos em cada polígono de propriedade
+
   const onEachProperty = (feature: Feature, layer: Layer) => {
     if (feature.properties) {
       const { nome, proprietario, id } = feature.properties;
-      const popupContent = `
-        <b>${nome}</b><br>
-        Proprietário: ${proprietario}<br>
-        <small>Clique para ver detalhes</small>
-      `;
-      layer.bindPopup(popupContent);
-
-      // Adiciona o evento de clique para notificar o componente pai
+      layer.bindPopup(
+        `<b>${nome}</b><br>Proprietário: ${proprietario}<br><small>Clique para ver detalhes</small>`
+      );
       layer.on({
         click: () => {
           onPropertySelect(id);
-        },
+          setSelectedPropertyId(id);
+        }
       });
     }
   };
@@ -231,32 +229,64 @@ export default function MapView({
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MapContainer center={[-22.505, -43.179]} zoom={13} style={{ height: '100%', width: '100%' }}>
-        <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
+        <TileLayer
+          key={baseMapKey}
+          url={activeBaseMap.url}
+          attribution={activeBaseMap.attribution}
+        />
         <MapViewAnimator target={mapViewTarget} />
-        
         <GeomanDrawControl onDrawComplete={onDrawComplete} drawingEnabled={drawingEnabled} />
-
-        {/* Camadas dinâmicas de sobreposição */}
-        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
-        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
-        <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
-        
-        {/* Camadas GeoJSON */}
-        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />}
-        {changePolygons && <GeoJSON key={JSON.stringify(changePolygons)} data={changePolygons} style={changePolygonStyle} />}
-        
-        {/* ✅ NOVO: Camada para exibir todas as propriedades cadastradas */}
-        {propertiesData && <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />}
-        
+        <DynamicTileLayer
+          url={visibleLayerUrl}
+          zIndex={indexLayerZIndex}
+          attribution="Índice Calculado"
+        />
+        <DynamicTileLayer
+          url={previewLayerUrl}
+          zIndex={previewLayerZIndex}
+          attribution="Pré-visualização"
+        />
+        <DynamicTileLayer
+          url={differenceLayerUrl}
+          zIndex={differenceLayerZIndex}
+          opacity={0.7}
+          attribution="Diferença NDVI"
+        />
+        {activeAoi && (
+          <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />
+        )}
+        {changePolygons && (
+          <GeoJSON
+            key={JSON.stringify(changePolygons)}
+            data={changePolygons}
+            style={changePolygonStyle}
+          />
+        )}
+        {propertiesData && (
+          <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />
+        )}
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />
       </MapContainer>
 
-      <div style={{ position: 'absolute', bottom: '20px', left: '10px', zIndex: 1001, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '20px',
+          left: '10px',
+          zIndex: 1001,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px'
+        }}
+      >
         <button className="map-layer-button firms" onClick={() => setShowFirmsPoints(p => !p)}>
           {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
         </button>
-        <button className="map-layer-button precipitation" onClick={() => setShowPrecipitation(p => !p)}>
+        <button
+          className="map-layer-button precipitation"
+          onClick={() => setShowPrecipitation(p => !p)}
+        >
           {showPrecipitation ? 'Ocultar Precipitação' : 'Mostrar Precipitação'}
         </button>
       </div>

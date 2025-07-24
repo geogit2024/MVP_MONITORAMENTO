@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
-
+import type { Property } from './components/SidebarCadastro'; // onde estiver declarado
 // Importa os componentes da interface
 import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
@@ -68,7 +68,14 @@ export default function MainApplication() {
     const [changeThreshold, setChangeThreshold] = useState(0.25);
     const [differenceLayerUrl, setDifferenceLayerUrl] = useState<string | null>(null);
     const [isChangeLayerVisible, setIsChangeLayerVisible] = useState(false);
+    const [isCreatingProperty, setIsCreatingProperty] = useState(false);
     
+    const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
+    const [isReadOnly, setIsReadOnly] = useState(true);
+
+
+    const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
+
     // ✅ CORREÇÃO: Declaração de estado corrigida. Inicializa como nulo.
     const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number } | null>(null);
 
@@ -100,6 +107,8 @@ export default function MainApplication() {
             showNotification("Nenhum polígono válido encontrado.", "error");
         }
     }, [showNotification]);
+
+
 
     const handleSearchImages = useCallback(async (geometry: Feature['geometry']) => {
         if (!satellite) { showNotification('Selecione um satélite.', 'error'); return; }
@@ -277,6 +286,34 @@ export default function MainApplication() {
     const handleDeleteAoi = useCallback(() => { setActiveAoi(null); setApiImages([]); setSelectedImageIds([]); resetAnalysisLayers(); }, [resetAnalysisLayers]);
     const handleToggleTheme = useCallback(() => setTheme(t => t === 'light' ? 'dark' : 'light'), []);
 
+    const handleStartCreation = useCallback(() => {
+    setIsCreatingProperty(true);
+    setSelectedProperty(null);
+    resetAnalysisLayers();
+}, [resetAnalysisLayers]);
+
+const handleCancelCreation = useCallback(() => {
+    setIsCreatingProperty(false);
+    setSelectedProperty(null);
+}, []);
+
+const handleSelectProperty = useCallback((property: Property) => {
+    setSelectedProperty(property);
+    setIsCreatingProperty(false);
+    setIsReadOnly(true); // bloqueia edição inicialmente
+}, []);
+
+const handleEnableEdit = useCallback(() => {
+    setIsReadOnly(false);
+  }, []);
+
+
+const handleSubmitProperty = useCallback(() => {
+    setRefreshTrigger(Date.now());
+    setIsCreatingProperty(false);
+    setSelectedProperty(null);
+}, []);
+
     useEffect(() => {
         if (notification) { const timer = setTimeout(() => setNotification(null), 4000); return () => clearTimeout(timer); }
     }, [notification]);
@@ -343,8 +380,8 @@ export default function MainApplication() {
                             differenceLayerZIndex={differenceLayerZIndex}
                             previewLayerZIndex={Z_INDEX.PREVIEW}
                             classifiedPlots={null}
-                            onPropertySelect={() => {}}
-                            refreshTrigger={null}
+                            onPropertySelect={handleSelectProperty} // ✅ corrigido para função válida
+                            refreshTrigger={refreshTrigger}         // ✅ corrigido para valor válido
                         />
                         {activeModule === 'territorial' && carouselItems.length > 0 && (
                             <ImageCarousel

@@ -1,0 +1,57 @@
+/* Estilos para a Barra de Ferramentas Flutuante */
+.floating-toolbar {
+    position: absolute; /* Posiciona a barra em relação ao seu contêiner pai com position: relative */
+    bottom: 20px; /* 20px do fundo do mapa */
+    left: 20px; /* 20px da esquerda do mapa */
+    background-color: rgba(50, 50, 50, 0.8); /* Fundo semi-transparente */
+    padding: 10px 15px;
+    border-radius: 8px;
+    display: flex; /* Para organizar os botões lado a lado */
+    gap: 10px; /* Espaçamento entre os botões */
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    z-index: 1000; /* Garante que ela fique acima de outros elementos do mapa */
+    opacity: 0; /* Inicia oculta */
+    pointer-events: none; /* Impede interações quando oculta */
+    transition: opacity 0.3s ease-in-out; /* Transição suave para aparecer */
+}
+
+.floating-toolbar.active {
+    opacity: 1; /* Torna visível */
+    pointer-events: all; /* Permite interações */
+}
+
+.tool-button {
+    background-color: #444;
+    color: #fff;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.9em;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.tool-button:hover:not(:disabled) {
+    background-color: #666;
+}
+
+.tool-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: #333; /* Fundo mais escuro quando desabilitado */
+}
+
+.tool-button img {
+    width: 20px; /* Tamanho do ícone */
+    height: 20px;
+    filter: invert(100%); /* Para ícones pretos em fundo escuro */
+}
+
+/* Estilo para a ferramenta de swipe ativada */
+.tool-button.active { /* Note que a classe 'active' é no próprio botão */
+    background-color: dodgerblue; /* Cor de destaque quando a ferramenta de swipe estiver ativa */
+    box-shadow: 0 0 10px dodgerblue;
+}

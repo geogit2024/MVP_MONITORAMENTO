@@ -24,7 +24,7 @@ export interface Property {
   email: string;
   matricula?: string;
   ccir?: string;
-  geometry: Feature<Polygon>;
+  geometry: Feature<Polygon>; // Garanta que isso é Feature<Polygon> ou Feature<Geometry>
   doc_identidade_path?: string;
   doc_terra_path?: string;
 }
@@ -38,6 +38,7 @@ const PropertyRegistrationPage = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [prefilledData, setPrefilledData] = useState<Partial<Property> | null>(null);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+  const [isFormReadOnly, setIsFormReadOnly] = useState(true);
 
   const clearSelectionAndCloseForm = () => {
     setSelectedProperty(null);
@@ -45,11 +46,13 @@ const PropertyRegistrationPage = () => {
     setIsFormOpen(false);
     setIsCreating(false);
     setPrefilledData(null);
+    setIsFormReadOnly(true); // Define como leitura ao limpar/fechar o formulário
   };
 
   const handleStartCreation = () => {
     clearSelectionAndCloseForm();
     setIsCreating(true);
+    setIsFormReadOnly(false); // Formulário editável ao iniciar a criação
   };
 
   const handleGeometryDefined = useCallback(async (geometry: Feature | null) => {
@@ -95,6 +98,7 @@ const PropertyRegistrationPage = () => {
     } finally {
       setIsFetchingLocation(false);
       setIsFormOpen(true);
+      setIsFormReadOnly(false); // Formulário editável após a geometria ser definida
     }
   }, []);
 
@@ -107,6 +111,10 @@ const PropertyRegistrationPage = () => {
         if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
         const fullPropertyDetails: Property = await response.json();
 
+        // LOGGING PARA DEPURAR: Verifique o que vem do backend para a geometria
+        console.log("Geometria carregada do backend:", fullPropertyDetails.geometry);
+
+
         setSelectedProperty(fullPropertyDetails);
 
         const featureGeo = fullPropertyDetails.geometry.type === "Feature"
@@ -116,6 +124,7 @@ const PropertyRegistrationPage = () => {
         const bounds = L.geoJSON(featureGeo).getBounds();
         setMapViewTarget(bounds);
         setIsFormOpen(true);
+        setIsFormReadOnly(true); // Inicia em modo de leitura ao selecionar uma propriedade existente
       } catch (error) {
         console.error(error);
         alert("Não foi possível carregar os detalhes da propriedade.");
@@ -129,6 +138,10 @@ const PropertyRegistrationPage = () => {
     clearSelectionAndCloseForm();
     setRefreshTrigger(currentValue => currentValue + 1);
     alert("Operação realizada com sucesso!");
+  };
+
+  const handleEditForm = () => {
+    setIsFormReadOnly(false); // Mudar para modo de edição
   };
 
   const handleAoiFileUpload = useCallback(async (file: File | null) => {
@@ -198,11 +211,19 @@ const PropertyRegistrationPage = () => {
         <aside className="form-sidebar-right">
           <PropertyForm
             key={selectedProperty?.id || 'new-property-form'}
-            geometry={(newGeometry || selectedProperty?.geometry)!}
+            // CORREÇÃO APLICADA AQUI: Garante que um objeto Feature válido é sempre passado.
+            // Se newGeometry e selectedProperty?.geometry são nulos/indefinidos,
+            // um Feature de polígono vazio será usado como fallback.
+            geometry={
+              newGeometry || 
+              selectedProperty?.geometry || 
+              { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] } } as Feature<Polygon>
+            }
             onSubmit={handleFormSubmit}
             onCancel={clearSelectionAndCloseForm}
             initialData={selectedProperty ? selectedProperty : prefilledData as Property}
-            isReadOnly={!!selectedProperty}
+            isReadOnly={isFormReadOnly}
+            onEdit={handleEditForm}
             onSegmentationComplete={() => {}}
           />
         </aside>
