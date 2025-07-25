@@ -197,7 +197,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
           </fieldset>
 
           <fieldset disabled={isLoading || isReadOnly}>
-            <legend>2. Identificação do Proprietário ou Possuidor</legend>
+            <legend>2. Identificação do Proprietário</legend>
             <div className="form-grid">
               <div className="form-group full-width">
                 <label htmlFor="proprietario_nome">Nome completo / Razão Social</label>
