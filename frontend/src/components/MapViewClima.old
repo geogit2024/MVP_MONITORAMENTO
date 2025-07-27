@@ -1,0 +1,145 @@
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, useMap, GeoJSON, ImageOverlay } from 'react-leaflet';
+import L, { LatLngBoundsExpression } from 'leaflet';
+import { Feature } from 'geojson';
+import FirmsDataLayer from './FirmsDataLayer';
+import BaseMapSelector from './BaseMapSelector';
+
+import 'leaflet/dist/leaflet.css';
+import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
+import '@geoman-io/leaflet-geoman-free';
+
+import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
+import iconUrl from 'leaflet/dist/images/marker-icon.png';
+import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
+
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl,
+  iconUrl,
+  shadowUrl,
+});
+
+const baseMaps = {
+  osm: {
+    name: 'Padrão',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+  },
+  satellite: {
+    name: 'Satélite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+  },
+  dark: {
+    name: 'Escuro',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; CARTO',
+  },
+  google_streets: {
+    name: 'Google Streets',
+    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    attribution: '&copy; Google',
+  },
+  google_hybrid: {
+    name: 'Google Hybrid',
+    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    attribution: '&copy; Google',
+  }
+};
+
+const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (target) {
+      map.flyToBounds(target, { padding: [50, 50] });
+    }
+  }, [target, map]);
+  return null;
+};
+
+const GeomanDrawControl = ({ onDrawComplete }: { onDrawComplete: (geojson: Feature) => void }) => {
+  const map = useMap();
+  useEffect(() => {
+    map.pm.addControls({
+      position: 'topleft',
+      drawPolygon: true,
+      drawCircle: true,
+      removalMode: true,
+      drawMarker: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
+      drawRectangle: false,
+      editMode: false,
+      dragMode: false,
+      cutPolygon: false
+    });
+
+    map.pm.setPathOptions({ color: '#ff7800', fill: false, weight: 3 });
+
+    const handleCreate = (e: any) => {
+      map.pm.getGeomanLayers().forEach(l => {
+        if (l._leaflet_id !== e.layer._leaflet_id) {
+          l.remove();
+        }
+      });
+      let finalLayer = e.layer;
+      if (e.shape === 'Circle') {
+        finalLayer = L.PM.Utils.circleToPolygon(e.layer, 64);
+      }
+      const geojson = finalLayer.toGeoJSON() as Feature;
+      onDrawComplete(geojson);
+    };
+    map.on('pm:create', handleCreate);
+    return () => { if (map.pm) { map.pm.removeControls(); map.off('pm:create', handleCreate); } };
+  }, [map, onDrawComplete]);
+  return null;
+};
+
+interface MapViewProps {
+  onDrawComplete: (geojson: Feature) => void;
+  indexData?: { imageUrl: string; bounds: LatLngBoundsExpression } | null;
+  changePolygons?: Feature | null;
+  activeAoi?: Feature | null;
+  baseMapKey: string;
+  onBaseMapChange: (key: string) => void;
+  mapViewTarget: LatLngBoundsExpression | null;
+  showFirmsPoints?: boolean;
+}
+
+export default function MapViewClima({
+  onDrawComplete,
+  indexData,
+  changePolygons,
+  activeAoi,
+  baseMapKey,
+  onBaseMapChange,
+  mapViewTarget,
+  showFirmsPoints = true,
+}: MapViewProps) {
+  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
+
+  const changePolygonStyle = (feature?: Feature) => ({
+    fillColor: feature?.properties?.change_type === 'gain' ? 'green' : 'red',
+    color: feature?.properties?.change_type === 'gain' ? 'green' : 'red',
+    weight: 1,
+    fillOpacity: 0.5
+  });
+
+  const activeBaseMap = baseMaps[baseMapKey as keyof typeof baseMaps] || baseMaps.osm;
+
+  return (
+    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
+      <MapContainer center={[-22.7273, -47.6492]} zoom={13} style={{ height: '100%', width: '100%' }}>
+        <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
+        <MapViewAnimator target={mapViewTarget} />
+        <GeomanDrawControl onDrawComplete={onDrawComplete} />
+        {activeAoi && <GeoJSON data={activeAoi} style={aoiStyle} />}
+        {indexData && <ImageOverlay url={indexData.imageUrl} bounds={indexData.bounds} opacity={0.8} zIndex={10} />}
+        {changePolygons && <GeoJSON data={changePolygons} style={changePolygonStyle} />}
+        {showFirmsPoints && <FirmsDataLayer />}
+      </MapContainer>
+    </div>
+  );
+}

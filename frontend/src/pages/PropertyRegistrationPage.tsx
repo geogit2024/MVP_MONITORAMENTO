@@ -7,9 +7,8 @@ import PropertyForm from '../components/PropertyForm';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
 import './PropertyRegistrationPage.css';
-import * as turf from '@turf/turf'; // Importa a biblioteca Turf.js
+import * as turf from '@turf/turf';
 
-// A interface da propriedade precisa incluir os novos campos
 export interface Property {
   id: string;
   propriedade_nome: string;
@@ -22,7 +21,7 @@ export interface Property {
   email: string;
   matricula?: string;
   ccir?: string;
-  geometry: Feature<Polygon>; // Garanta que isso é Feature<Polygon> ou Feature<Geometry>
+  geometry: Feature<Polygon>;
   doc_identidade_path?: string;
   doc_terra_path?: string;
 }
@@ -38,19 +37,22 @@ const PropertyRegistrationPage = () => {
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isFormReadOnly, setIsFormReadOnly] = useState(true);
 
+  // CONTROLE DO MAPA BASE (NOVO!)
+  const [baseMapKey, setBaseMapKey] = useState('satellite');
+
   const clearSelectionAndCloseForm = () => {
     setSelectedProperty(null);
     setNewGeometry(null);
     setIsFormOpen(false);
     setIsCreating(false);
     setPrefilledData(null);
-    setIsFormReadOnly(true); // Define como leitura ao limpar/fechar o formulário
+    setIsFormReadOnly(true);
   };
 
   const handleStartCreation = () => {
     clearSelectionAndCloseForm();
     setIsCreating(true);
-    setIsFormReadOnly(false); // Formulário editável ao iniciar a criação
+    setIsFormReadOnly(false);
   };
 
   const handleGeometryDefined = useCallback(async (geometry: Feature | null) => {
@@ -96,7 +98,7 @@ const PropertyRegistrationPage = () => {
     } finally {
       setIsFetchingLocation(false);
       setIsFormOpen(true);
-      setIsFormReadOnly(false); // Formulário editável após a geometria ser definida
+      setIsFormReadOnly(false);
     }
   }, []);
 
@@ -109,9 +111,7 @@ const PropertyRegistrationPage = () => {
         if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
         const fullPropertyDetails: Property = await response.json();
 
-        // LOGGING PARA DEPURAR: Verifique o que vem do backend para a geometria
         console.log("Geometria carregada do backend:", fullPropertyDetails.geometry);
-
 
         setSelectedProperty(fullPropertyDetails);
 
@@ -122,7 +122,7 @@ const PropertyRegistrationPage = () => {
         const bounds = L.geoJSON(featureGeo).getBounds();
         setMapViewTarget(bounds);
         setIsFormOpen(true);
-        setIsFormReadOnly(true); // Inicia em modo de leitura ao selecionar uma propriedade existente
+        setIsFormReadOnly(true);
       } catch (error) {
         console.error(error);
         alert("Não foi possível carregar os detalhes da propriedade.");
@@ -139,10 +139,9 @@ const PropertyRegistrationPage = () => {
   };
 
   const handleEditForm = () => {
-    setIsFormReadOnly(false); // Mudar para modo de edição
+    setIsFormReadOnly(false);
   };
 
-  // NOVO: Função para lidar com a exclusão de uma propriedade
   const handleDeleteProperty = async (propertyId: string) => {
     if (!window.confirm("Tem certeza que deseja apagar esta propriedade? Esta ação é irreversível.")) {
       return;
@@ -159,8 +158,8 @@ const PropertyRegistrationPage = () => {
       }
 
       alert("Propriedade apagada com sucesso!");
-      clearSelectionAndCloseForm(); // Limpa a seleção e fecha o formulário
-      setRefreshTrigger(currentValue => currentValue + 1); // Força a atualização da lista de propriedades na Sidebar
+      clearSelectionAndCloseForm();
+      setRefreshTrigger(currentValue => currentValue + 1);
     } catch (error: any) {
       console.error("Erro ao apagar propriedade:", error);
       alert(error.message || "Erro de conexão ao apagar propriedade.");
@@ -220,12 +219,15 @@ const PropertyRegistrationPage = () => {
             onPropertySelect={(id) => handleSelectProperty(id)}
             refreshTrigger={refreshTrigger}
             classifiedPlots={null}
-            {...{
-              visibleLayerUrl: null, previewLayerUrl: null, changePolygons: null,
-              baseMapKey: "satellite", onBaseMapChange: () => {}, 
-              differenceLayerUrl: null,
-              indexLayerZIndex: 10, differenceLayerZIndex: 10, previewLayerZIndex: 10
-            }}
+            visibleLayerUrl={null}
+            previewLayerUrl={null}
+            changePolygons={null}
+            baseMapKey={baseMapKey}
+            onBaseMapChange={setBaseMapKey}
+            differenceLayerUrl={null}
+            indexLayerZIndex={10}
+            differenceLayerZIndex={10}
+            previewLayerZIndex={10}
           />
         </div>
       </main>
@@ -234,9 +236,6 @@ const PropertyRegistrationPage = () => {
         <aside className="form-sidebar-right">
           <PropertyForm
             key={selectedProperty?.id || 'new-property-form'}
-            // Garante que um objeto Feature válido é sempre passado.
-            // Se newGeometry e selectedProperty?.geometry são nulos/indefinidos,
-            // um Feature de polígono vazio será usado como fallback.
             geometry={
               newGeometry || 
               selectedProperty?.geometry || 
@@ -247,8 +246,7 @@ const PropertyRegistrationPage = () => {
             initialData={selectedProperty ? selectedProperty : prefilledData as Property}
             isReadOnly={isFormReadOnly}
             onEdit={handleEditForm}
-            // CORREÇÃO AQUI: Garante que onDelete sempre passa uma função
-            onDelete={selectedProperty ? handleDeleteProperty : () => { /* no-op */ }} 
+            onDelete={selectedProperty ? handleDeleteProperty : () => {}} 
             onSegmentationComplete={() => {}}
           />
         </aside>

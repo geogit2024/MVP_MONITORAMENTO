@@ -1,5 +1,3 @@
-// src/components/MapView.tsx
-
 import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, useMap, GeoJSON } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
@@ -13,10 +11,11 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 
+import BaseMapSelector from './BaseMapSelector';
+
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
-// ✅ EXPORTAÇÃO DO fireIcon
 export const fireIcon = new L.Icon({
   iconUrl: 'https://cdn-icons-png.flaticon.com/512/482/482541.png',
   iconSize: [24, 24],
@@ -39,6 +38,16 @@ const baseMaps = {
     name: 'Escuro',
     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
     attribution: '&copy; CARTO',
+  },
+  google_streets: {
+    name: 'Google Streets',
+    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    attribution: '&copy; Google',
+  },
+  google_hybrid: {
+    name: 'Google Hybrid',
+    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    attribution: '&copy; Google',
   }
 };
 
@@ -228,6 +237,8 @@ export default function MapView({
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
+
       <MapContainer center={[-22.505, -43.179]} zoom={13} style={{ height: '100%', width: '100%' }}>
         <TileLayer
           key={baseMapKey}
@@ -293,3 +304,4 @@ export default function MapView({
     </div>
   );
 }
+
