@@ -9,6 +9,7 @@ import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
+import NdviResultModal from './components/NdviResultModal'; // <-- ALTERAÇÃO: Importa o novo componente Modal
 
 // ✅ CORREÇÃO: Importa MapStateProvider
 import { MapStateProvider } from './context/MapStateContext'; 
@@ -23,7 +24,24 @@ import ChangeResultModal from './components/ChangeResultModal'; // ✅ Importa o
 
 // --- DEFINIÇÃO DE TIPOS E INTERFACES ---
 export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
-export interface IndexResult { indexName: string; imageUrl: string; downloadUrl: string; }
+
+export interface NdviAreas {
+  area_agua: number;
+  area_solo_exposto: number;
+  area_vegetacao_rala: number;
+  area_vegetacao_densa: number;
+  pixel_area: number;
+  scale: number;
+  sensor: string;
+}
+
+export interface IndexResult {
+    indexName: string;
+    imageUrl: string;
+    downloadUrl: string;
+    classification?: NdviAreas;
+}
+
 interface NotificationProps { message: string; type: 'error' | 'success'; onDismiss: () => void; }
 interface LoadingIndicatorProps { text: string; subtext: string; }
 
@@ -73,10 +91,11 @@ export default function MainApplication() {
     const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
     const [isReadOnly, setIsReadOnly] = useState(true);
 
+    const [ndviAreas, setNdviAreas] = useState<NdviAreas | null>(null);
+
 
     const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
 
-    // ✅ CORREÇÃO: Declaração de estado corrigida. Inicializa como nulo.
     const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number } | null>(null);
 
     useEffect(() => {
@@ -95,7 +114,8 @@ export default function MainApplication() {
         setPreviewLayerUrl(null);
         setDifferenceLayerUrl(null);
         setIsChangeLayerVisible(false);
-        setChangeAreas(null); // ✅ Limpa as áreas de mudança também
+        setChangeAreas(null);
+        setNdviAreas(null);
     }, []);
 
     const setAoiAndZoom = useCallback((feature: Feature) => {
@@ -144,17 +164,28 @@ export default function MainApplication() {
             const imageId = selectedImageIds[0];
             const res = await fetch(`${API_BASE_URL}/api/earth-images/indices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry, indices: selectedIndices }) });
             if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao calcular os índices"); }
+            
             const data: { results: IndexResult[], bounds: LatLngBoundsExpression } = await res.json();
+            
             if (data.results && data.results.length > 0) {
                 setCalculatedIndices(data.results);
                 setVisibleLayerUrl(data.results[0].imageUrl);
                 setMapViewTarget(data.bounds);
                 showNotification(`${data.results.length} índice(s) calculado(s)!`, "success");
+
+                const ndviResult = data.results.find(r => r.indexName.toUpperCase() === 'NDVI');
+                if (ndviResult && ndviResult.classification) {
+                    setNdviAreas(ndviResult.classification);
+                } else {
+                    setNdviAreas(null);
+                }
+
             } else {
                 throw new Error("A API não retornou resultados para os índices solicitados.");
             }
         } catch (error: any) {
             showNotification(error.message || "Erro ao calcular os índices.", "error");
+            setNdviAreas(null);
         } finally {
             setLoadingState('idle');
         }
@@ -192,7 +223,6 @@ export default function MainApplication() {
             const data = await res.json();
             setDifferenceLayerUrl(data.differenceImageUrl);
             
-            // ✅ ATUALIZAÇÃO: Salva os dados da área no estado para exibir o modal.
             setChangeAreas({ gain: data.gainAreaHa, loss: data.lossAreaHa });
 
             if (data.changeGeoJson && data.changeGeoJson.features.length > 0) {
@@ -300,7 +330,7 @@ const handleCancelCreation = useCallback(() => {
 const handleSelectProperty = useCallback((property: Property) => {
     setSelectedProperty(property);
     setIsCreatingProperty(false);
-    setIsReadOnly(true); // bloqueia edição inicialmente
+    setIsReadOnly(true);
 }, []);
 
 const handleEnableEdit = useCallback(() => {
@@ -313,6 +343,11 @@ const handleSubmitProperty = useCallback(() => {
     setIsCreatingProperty(false);
     setSelectedProperty(null);
 }, []);
+
+    // <-- ALTERAÇÃO: Adiciona a função para fechar o modal
+    const handleCloseNdviModal = useCallback(() => {
+        setNdviAreas(null);
+    }, []);
 
     useEffect(() => {
         if (notification) { const timer = setTimeout(() => setNotification(null), 4000); return () => clearTimeout(timer); }
@@ -380,8 +415,8 @@ const handleSubmitProperty = useCallback(() => {
                             differenceLayerZIndex={differenceLayerZIndex}
                             previewLayerZIndex={Z_INDEX.PREVIEW}
                             classifiedPlots={null}
-                            onPropertySelect={handleSelectProperty} // ✅ corrigido para função válida
-                            refreshTrigger={refreshTrigger}         // ✅ corrigido para valor válido
+                            onPropertySelect={handleSelectProperty}
+                            refreshTrigger={refreshTrigger}
                         />
                         {activeModule === 'territorial' && carouselItems.length > 0 && (
                             <ImageCarousel
@@ -394,12 +429,18 @@ const handleSubmitProperty = useCallback(() => {
                         )}
                     </main>
                 </div>
-                {/* ✅ Renderização Condicional do Modal */}
                 {changeAreas && (
                     <ChangeResultModal
                         gainArea={changeAreas.gain}
                         lossArea={changeAreas.loss}
                         onClose={() => setChangeAreas(null)}
+                    />
+                )}
+                {/* <-- ALTERAÇÃO: Renderiza o modal de resultados NDVI condicionalmente --> */}
+                {ndviAreas && (
+                    <NdviResultModal 
+                        data={ndviAreas}
+                        onClose={handleCloseNdviModal}
                     />
                 )}
             </div>

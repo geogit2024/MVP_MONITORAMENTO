@@ -356,3 +356,90 @@ body, #root {
     padding: 10px 5px;
   }
 }
+/* Estilos para o Modal de Resultados */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000; /* Garante que fique sobre tudo */
+}
+
+.modal-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  width: 90%;
+  max-width: 600px;
+  color: #333;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.modal-close-button {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  font-weight: bold;
+  cursor: pointer;
+  color: #aaa;
+  line-height: 1;
+  padding: 0;
+}
+
+.modal-close-button:hover {
+  color: #333;
+}
+
+.modal-body {
+  /* O corpo do modal pode ter estilos específicos se necessário */
+}
+
+.ndvi-chart-container {
+  /* Estilos para o container do gráfico, se necessário */
+}
+
+.ndvi-details-list {
+  margin-top: 20px;
+  text-align: left;
+}
+
+.ndvi-details-list h4 {
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 5px;
+  margin-bottom: 10px;
+}
+
+.ndvi-details-list ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.ndvi-details-list li {
+  padding: 4px 0;
+}
+
+.ndvi-metadata {
+  margin-top: 15px;
+  font-size: 0.9em;
+  color: #666;
+  text-align: center;
+}

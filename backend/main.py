@@ -135,10 +135,12 @@ class IndicesRequest(BaseModel):
     polygon: Dict[str, Any]
     indices: List[str]
 
+# ALTERAÇÃO: Adicionado campo 'classification' para receber dados de quantificação
 class IndexResult(BaseModel):
     indexName: str
     imageUrl: str
     downloadUrl: str
+    classification: Optional[Dict[str, Any]] = None
 
 class IndicesResponse(BaseModel):
     bounds: List[List[float]]
@@ -192,8 +194,6 @@ class PropertyDetails(BaseModel):
     matricula: Optional[str] = None
     ccir: Optional[str] = None
     geometry: Dict[str, Any] # Geometria como um objeto GeoJSON
-    # Estes campos podem ser adicionados se você precisar retorná-los,
-    # mas não são obrigatórios para a criação/atualização se o upload for separado.
     doc_identidade_path: Optional[str] = None
     doc_terra_path: Optional[str] = None
 
@@ -246,7 +246,6 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
                 calculated[name] = index_image
             except Exception as e:
                 print(f"Aviso: Não foi possível calcular o índice '{name}'. Erro: {e}")
-                # Não adicione ao 'calculated' se falhou
     
     bands = {
         'NIR': scaled_image.select('SR_B5' if is_landsat else 'B8'),
@@ -274,23 +273,71 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
         add_index('RTVIcore', '100 * (NIR - RE1) - 10 * (NIR - GREEN)', bands)
     return calculated
 
+# NOVA FUNÇÃO: Adicionada a função de classificação e quantificação do NDVI
+async def classify_and_quantify_ndvi_all(ndvi_image: ee.Image, geometry: ee.Geometry, pixel_area: float = 900.0, scale: int = 30) -> Dict[str, float]:
+    """
+    Classifica NDVI em quatro classes e retorna área de cada uma em hectares.
+    Esta função foi adaptada para ser assíncrona e não bloquear o servidor.
+    """
+    # Define as máscaras para cada classe de cobertura do solo
+    agua_mask = ndvi_image.lt(0.05)
+    solo_mask = ndvi_image.gte(0.05).And(ndvi_image.lt(0.2))
+    veg_rala_mask = ndvi_image.gte(0.2).And(ndvi_image.lt(0.5))
+    veg_densa_mask = ndvi_image.gte(0.5)
+
+    async def async_sum_mask(mask: ee.Image) -> float:
+        """Função auxiliar para executar a redução de forma assíncrona."""
+        # A função de redução do GEE é bloqueante, então a executamos em um thread separado
+        def blocking_reduce():
+            # A máscara já tem valor 1 onde a condição é verdadeira, e 0 (ou mascarado) onde é falsa.
+            # O redutor 'sum()' irá somar esses '1's, resultando na contagem de pixels.
+            # A banda do NDVI é renomeada para 'NDVI', então o resultado estará sob essa chave.
+            result = mask.rename('NDVI').reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=geometry,
+                scale=scale,
+                maxPixels=1e10
+            ).getInfo()
+            # Retorna a contagem de pixels, ou 0 se a chave não for encontrada
+            return result.get('NDVI', 0)
+        
+        # Executa a função bloqueante em um thread separado e aguarda o resultado
+        return await asyncio.to_thread(blocking_reduce)
+
+    # Executa todas as contagens de pixels concorrentemente
+    agua_count, solo_count, veg_rala_count, veg_densa_count = await asyncio.gather(
+        async_sum_mask(agua_mask),
+        async_sum_mask(solo_mask),
+        async_sum_mask(veg_rala_mask),
+        async_sum_mask(veg_densa_mask)
+    )
+
+    # Calcula a área em hectares para cada classe
+    # Área (ha) = (número de pixels * área de um pixel em m²) / 10000 m²/ha
+    area_agua = (agua_count * pixel_area) / 10000
+    area_solo_exposto = (solo_count * pixel_area) / 10000
+    area_vegetacao_rala = (veg_rala_count * pixel_area) / 10000
+    area_vegetacao_densa = (veg_densa_count * pixel_area) / 10000
+
+    return {
+        "area_agua": area_agua,
+        "area_solo_exposto": area_solo_exposto,
+        "area_vegetacao_rala": area_vegetacao_rala,
+        "area_vegetacao_densa": area_vegetacao_densa
+    }
+
 # --------------------------------------------------------------------------
 # ENDPOINTS DA API
 # --------------------------------------------------------------------------
 
-# Configuração de uploads (mantida, mas a lógica de recebimento de arquivos está separada agora)
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Endpoint para CRIAR propriedade (POST)
 @app.post("/api/properties", status_code=status.HTTP_201_CREATED, response_model=PropertyDetails, tags=["Properties"])
-async def create_property(
-    # ✅ MUDANÇA PRINCIPAL: Recebe um objeto PropertyCreate completo via corpo JSON
-    property_data: PropertyCreate
-):
+async def create_property(property_data: PropertyCreate):
     """Recebe os dados da propriedade (JSON) e a persiste no banco de dados."""
     try:
-        geom_shape = shape(property_data.geometry) # Já é um dicionário Python
+        geom_shape = shape(property_data.geometry)
         
         insert_query = propriedades_rurais.insert().values(
             propriedade_nome=property_data.propriedade_nome,
@@ -304,8 +351,8 @@ async def create_property(
             matricula=property_data.matricula,
             ccir=property_data.ccir,
             geom=f'SRID=4326;{geom_shape.wkt}',
-            doc_identidade_path=None, # Caminhos de arquivo não são tratados aqui via JSON
-            doc_terra_path=None      # Precisaria de endpoint separado ou FormData
+            doc_identidade_path=None,
+            doc_terra_path=None
         ).returning(propriedades_rurais.c.id)
 
         with engine.connect() as connection:
@@ -316,7 +363,6 @@ async def create_property(
             
             return await get_property_by_id(new_id)
 
-
     except asyncio.CancelledError:
         print("⚠️  Criação de propriedade cancelada.")
         raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição de criação de propriedade foi cancelada.")
@@ -325,15 +371,9 @@ async def create_property(
         if "UniqueViolation" in str(e) or "duplicate key value" in str(e):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe uma propriedade cadastrada com este CPF/CNPJ.")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao salvar a propriedade: {e}")
-    
 
-# ✅ Endpoint para ATUALIZAR propriedade (PUT)
 @app.put("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
-async def update_property(
-    property_id: int,
-    # ✅ MUDANÇA PRINCIPAL: Recebe um objeto PropertyCreate completo via corpo JSON
-    property_update_data: PropertyCreate
-):
+async def update_property(property_id: int, property_update_data: PropertyCreate):
     """Atualiza os dados de uma propriedade rural existente pelo seu ID."""
     try:
         existing_property_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
@@ -356,7 +396,6 @@ async def update_property(
             "matricula": property_update_data.matricula,
             "ccir": property_update_data.ccir,
             "geom": f'SRID=4326;{geom_shape.wkt}'
-            # caminhos de arquivo não são atualizados aqui
         }
 
         update_query = propriedades_rurais.update().where(propriedades_rurais.c.id == property_id).values(**update_values)
@@ -379,7 +418,29 @@ async def update_property(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe outra propriedade cadastrada com este CPF/CNPJ.")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao atualizar a propriedade: {e}")
 
-# === ENDPOINTS DE LEITURA (GET) ===
+@app.delete("/api/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Properties"])
+async def delete_property(property_id: int):
+    """Exclui uma propriedade rural existente pelo seu ID."""
+    try:
+        check_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            existing_id = connection.execute(check_query).scalar_one_or_none()
+            if existing_id is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
+
+        delete_query = propriedades_rurais.delete().where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            connection.execute(delete_query)
+            transaction.commit()
+        return
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Erro ao excluir propriedade (ID: {property_id}): {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao excluir a propriedade: {e}")
+
 @app.get("/api/properties", response_model=FeatureCollection, tags=["Properties"])
 async def get_all_properties():
     """Retorna todas as propriedades cadastradas como um GeoJSON FeatureCollection."""
@@ -412,7 +473,6 @@ async def get_all_properties():
         print(f"❌ Erro ao buscar propriedades: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao buscar propriedades.")
 
-
 @app.get("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
 async def get_property_by_id(property_id: int):
     """
@@ -422,43 +482,26 @@ async def get_property_by_id(property_id: int):
         propriedades_rurais,
         ST_AsGeoJSON(propriedades_rurais.c.geom).label('geometry_geojson')
     ).where(propriedades_rurais.c.id == property_id)
-
     try:
         with engine.connect() as connection:
             result = connection.execute(query).mappings().first()
-
             if result is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Propriedade não encontrada."
-                )
-
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
             property_data = dict(result)
             geometry_geojson = property_data.pop('geometry_geojson', None)
-
             if geometry_geojson:
                 if isinstance(geometry_geojson, (bytes, bytearray)):
                     geometry_geojson = geometry_geojson.decode('utf-8')
                 property_data['geometry'] = json.loads(geometry_geojson)
             else:
                 property_data['geometry'] = None
-
             return PropertyDetails(**property_data)
-
     except asyncio.CancelledError:
         print(f"⚠️  Busca de propriedade por ID ({property_id}) cancelada.")
-        raise HTTPException(
-            status_code=status.HTTP_408_REQUEST_TIMEOUT,
-            detail="A requisição foi cancelada ou excedeu o tempo limite."
-        )
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao buscar propriedade: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erro interno ao buscar propriedade."
-        )
-
-
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro interno ao buscar propriedade.")
 
 # === ENDPOINTS DO GOOGLE EARTH ENGINE ===
 @app.post("/api/earth-images/search", response_model=List[ImageInfo], tags=["Google Earth Engine"])
@@ -478,11 +521,8 @@ async def search_earth_images(request: SearchRequest):
             .filter(ee.Filter.lt(cloud_property, request.cloudPct))
             .sort('system:time_start')
         )
-        
-        # --- CORREÇÃO AQUI: Await o resultado de asyncio.to_thread antes de acessar 'features' ---
         images_info_result = await asyncio.to_thread(image_collection.getInfo)
         images_list_info = images_info_result['features']
-        # --- FIM DA CORREÇÃO ---
         
         if not images_list_info:
             return []
@@ -535,48 +575,73 @@ async def get_image_preview_layer(request: ImagePreviewRequest):
         print(f"❌ Erro ao gerar preview: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao gerar preview: {e}")
 
+# ROTA MODIFICADA: para calcular e retornar a quantificação do NDVI
 @app.post("/api/earth-images/indices", response_model=IndicesResponse, tags=["Google Earth Engine"])
 async def generate_indices(request: IndicesRequest):
-    """Calcula múltiplos índices e retorna URLs para visualização e download."""
+    """Calcula múltiplos índices e retorna URLs para visualização, download e quantificação NDVI."""
     try:
         if not request.indices:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A lista de índices não pode ser vazia.")
+        
         is_landsat = "LANDSAT" in request.satellite
         geometry = create_ee_geometry_from_json(request.polygon)
         image = ee.Image(request.imageId)
         calculated_indices = calculate_indices_gee(image, is_landsat, request.indices)
+        
         results = []
         vis_params_index = {'min': 0, 'max': 1, 'palette': ['#d7191c', '#fdae61', '#ffffbf', '#a6d96a', '#1a9641']}
+        
         for index_name, index_image in calculated_indices.items():
             clipped_index_image = index_image.clip(geometry)
-            map_id = await asyncio.to_thread(clipped_index_image.getMapId, vis_params_index)
-            download_url = await asyncio.to_thread(clipped_index_image.getDownloadURL, {
+            classification_data = None
+            
+            # --- NOVA LÓGICA DE CLASSIFICAÇÃO NDVI ---
+            if index_name.upper() == "NDVI":
+                scale = 10 if "SENTINEL" in request.satellite.upper() else 30
+                pixel_area = scale * scale  # Área do pixel em m² (10x10=100 para Sentinel, 30x30=900 para Landsat)
+                sensor_str = "Sentinel" if "SENTINEL" in request.satellite.upper() else "Landsat"
+                
+                # Chama a função de quantificação
+                ndvi_areas = await classify_and_quantify_ndvi_all(
+                    clipped_index_image, geometry, pixel_area=pixel_area, scale=scale
+                )
+                
+                # Adiciona metadados ao resultado
+                ndvi_areas.update({
+                    "pixel_area_m2": pixel_area,
+                    "scale_m": scale,
+                    "sensor": sensor_str,
+                })
+                classification_data = ndvi_areas
+            # --- FIM DA NOVA LÓGICA ---
+
+            # Gera URLs de visualização e download
+            map_id_task = asyncio.to_thread(clipped_index_image.getMapId, vis_params_index)
+            download_url_task = asyncio.to_thread(clipped_index_image.getDownloadURL, {
                 'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
             })
+            
+            map_id, download_url = await asyncio.gather(map_id_task, download_url_task)
+
             results.append(IndexResult(
                 indexName=index_name,
                 imageUrl=map_id['tile_fetcher'].url_format,
-                downloadUrl=download_url
+                downloadUrl=download_url,
+                classification=classification_data # Adiciona os dados de classificação ao resultado
             ))
         
-        # --- CORREÇÃO APLICADA AQUI: Adicionado verificação de segurança ao acessar 'coordinates' ---
         bounds_info = await asyncio.to_thread(geometry.bounds().getInfo)
         
         bounds_for_response = []
         if bounds_info and 'coordinates' in bounds_info and bounds_info['coordinates']:
-            # Assume que bounds_info['coordinates'] é uma lista de listas (e.g., [[lon, lat], ...])
-            # e que o primeiro elemento [0] contém a lista principal de coordenadas do polígono.
             bounds_coords = bounds_info['coordinates'][0] 
             bounds_for_response = [[coord[1], coord[0]] for coord in bounds_coords]
         else:
-            # Caso não haja coordenadas válidas, definir um valor padrão ou levantar um erro.
-            # Um valor padrão pode ser útil para evitar falhas totais no frontend.
             print("Aviso: Geometria de limites não contém coordenadas válidas. Retornando limites padrão.")
-            # Exemplo de limites padrão (mundo inteiro, ou um valor seguro)
-            bounds_for_response = [[-90.0, -180.0], [90.0, 180.0]] 
-        # --- FIM DA CORREÇÃO ---
+            bounds_for_response = [[-90.0, -180.0], [90.0, 180.0]]
 
         return IndicesResponse(bounds=bounds_for_response, results=results)
+
     except asyncio.CancelledError:
         print("⚠️  Geração de índices cancelada.")
         raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
@@ -588,10 +653,7 @@ async def generate_indices(request: IndicesRequest):
 
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 async def detect_changes(request: ChangeDetectionRequest):
-    """
-    Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas
-    e retorna os resultados.
-    """
+    """Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas e retorna os resultados."""
     try:
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
@@ -618,14 +680,16 @@ async def detect_changes(request: ChangeDetectionRequest):
             return feature.buffer(10, maxError=1).buffer(-10, maxError=1)
 
         smoothed_vectors = change_vectors.map(smooth_feature)
-
         gain_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 2))
         loss_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 1))
 
-        # Obtenção dos valores de área (pode ser bloqueante, usar to_thread)
-        gain_area_value = await asyncio.to_thread(gain_polygons.geometry().area(maxError=1).divide(10000).getInfo) or 0.0
-        loss_area_value = await asyncio.to_thread(loss_polygons.geometry().area(maxError=1).divide(10000).getInfo) or 0.0
+        gain_area_value_task = asyncio.to_thread(gain_polygons.geometry().area(maxError=1).divide(10000).getInfo)
+        loss_area_value_task = asyncio.to_thread(loss_polygons.geometry().area(maxError=1).divide(10000).getInfo)
         
+        gain_area_value, loss_area_value = await asyncio.gather(gain_area_value_task, loss_area_value_task)
+        gain_area_value = gain_area_value or 0.0
+        loss_area_value = loss_area_value or 0.0
+
         change_geojson = await asyncio.to_thread(smoothed_vectors.getInfo)
 
         diff_vis_params = {'min': -0.5, 'max': 0.5, 'palette': ['red', '#ffcccb', 'white', '#90ee90', 'green']}
@@ -644,7 +708,6 @@ async def detect_changes(request: ChangeDetectionRequest):
     except Exception as e:
         print(f"❌ Erro ao detectar mudanças: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
-
 
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 async def get_download_info(request: DownloadInfoRequest):
@@ -687,29 +750,3 @@ async def get_precipitation_tile():
     except Exception as e:
         print(f"❌ Erro ao gerar camada de precipitação: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-    # No seu arquivo app.py (ou o arquivo principal do backend)
-
-@app.delete("/api/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Properties"])
-async def delete_property(property_id: int):
-    """Exclui uma propriedade rural existente pelo seu ID."""
-    try:
-        # Primeiro, verificar se a propriedade existe para retornar 404 se não existir
-        check_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
-        with engine.connect() as connection:
-            existing_id = connection.execute(check_query).scalar_one_or_none()
-            if existing_id is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
-
-        # Se existir, proceder com a exclusão
-        delete_query = propriedades_rurais.delete().where(propriedades_rurais.c.id == property_id)
-        with engine.connect() as connection:
-            transaction = connection.begin()
-            connection.execute(delete_query)
-            transaction.commit()
-        return # Retorna 204 No Content
-
-    except HTTPException as he:
-        raise he # Re-levanta HTTPExceptions já tratadas (ex: 404)
-    except Exception as e:
-        print(f"❌ Erro ao excluir propriedade (ID: {property_id}): {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao excluir a propriedade: {e}")
