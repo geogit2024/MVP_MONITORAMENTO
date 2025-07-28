@@ -365,9 +365,11 @@ body, #root {
   bottom: 0;
   background-color: rgba(0, 0, 0, 0.7);
   display: flex;
-  align-items: center;
+  align-items: flex-start; /* <-- ALTERAÇÃO: Alinha o modal no topo */
   justify-content: center;
-  z-index: 1000; /* Garante que fique sobre tudo */
+  z-index: 1000;
+  padding-top: 5vh; /* <-- ADIÇÃO: Adiciona um espaçamento do topo */
+  overflow-y: auto; /* Adiciona rolagem se o conteúdo for maior que a tela */
 }
 
 .modal-content {
@@ -442,4 +444,9 @@ body, #root {
   font-size: 0.9em;
   color: #666;
   text-align: center;
+}
+.ndvi-chart-container {
+  max-width: 450px; /* Define a largura máxima do gráfico */
+  margin: 0 auto;   /* Centra o gráfico horizontalmente no modal */
+  position: relative; /* Necessário para o dimensionamento correto do canvas */
 }
