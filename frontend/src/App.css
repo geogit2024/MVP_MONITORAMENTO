@@ -31,8 +31,10 @@ body, #root {
 /* --- LAYOUT PARA NAVEGAÇÃO SUPERIOR --- */
 .app-container {
   display: flex;
-  flex-direction: column; 
+  flex-direction: column;
   height: 100vh;
+  background-color: #1a1a1a; /* ou a cor que estiver usando */
+  position: relative; /* <-- ADICIONE ESTA LINHA */
 }
 
 .module-navigation {
@@ -356,39 +358,79 @@ body, #root {
     padding: 10px 5px;
   }
 }
-/* Estilos para o Modal de Resultados */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: flex-start; /* <-- ALTERAÇÃO: Alinha o modal no topo */
-  justify-content: center;
-  z-index: 1000;
-  padding-top: 5vh; /* <-- ADIÇÃO: Adiciona um espaçamento do topo */
-  overflow-y: auto; /* Adiciona rolagem se o conteúdo for maior que a tela */
-}
+/* ================================================================== */
+/* ESTILOS PARA O PAINEL FLUTUANTE DE RESULTADOS (Substituir os antigos)   */
+/* ================================================================== */
 
-.modal-content {
+/* Contêiner principal do painel, gerenciado por react-resizable */
+.floating-panel-box {
   background-color: white;
-  padding: 20px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-  width: 90%;
-  max-width: 600px;
+  /* A posição 'absolute' é gerenciada pela biblioteca react-draggable */
+  z-index: 1010; /* Garante que fique acima do mapa, mas abaixo de outros pop-ups */
   color: #333;
+  display: flex;
+  flex-direction: column;
+  position: absolute;
 }
 
-.modal-header {
+/* Cabeçalho que servirá como alça para arrastar */
+.panel-header {
+  padding: 10px 15px;
+  cursor: move; /* O cursor do mouse mudará para 'mover' sobre esta área */
+  background-color: #f0f0f0;
+  border-bottom: 1px solid #ddd;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
-  margin-bottom: 20px;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  user-select: none; /* Impede que o texto do título seja selecionado ao arrastar */
+}
+
+/* Botão de fechar no cabeçalho */
+.panel-close-button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  font-weight: bold;
+  cursor: pointer;
+  color: #888;
+}
+.panel-close-button:hover {
+  color: #000;
+}
+
+/* Corpo do painel com o conteúdo (gráfico e resumo) */
+.panel-body {
+  padding: 15px;
+  flex-grow: 1; /* Permite que o corpo cresça para preencher o espaço disponível */
+  overflow-y: auto; /* Adiciona rolagem vertical se o conteúdo for maior que o painel */
+  overflow-x: hidden;
+}
+
+/* --- Estilos obrigatórios para as alças de redimensionamento --- */
+.react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background-repeat: no-repeat;
+  background-origin: content-box;
+  box-sizing: border-box;
+  background-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2IDYiIHN0eWxlPSJiYWNrZ3JvdW5kLWNvbG9yOiNmZmZmZmYwMCIgeD0iMHB4IiB5PSIwcHgiIHdpZHRoPSI2cHgiIGhlaWdodD0iNnB4Ij48ZyBvcGFjaXR5PSIwLjMwMiI+PHBhdGggZD0iTSA2IDYgTCAwIDYgTCAwIDQuOCBMIDQuOCAwIEwgNiAwIEwgNiA2IFoiIGZpbGw9IiMwMDAwMDAiLz48L2c+PC9zdmc+');
+  background-position: bottom right;
+  padding: 0 3px 3px 0;
+}
+.react-resizable-handle-se {
+  bottom: 0;
+  right: 0;
+  cursor: se-resize;
 }
 
 .modal-header h3 {

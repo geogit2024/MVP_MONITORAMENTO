@@ -276,47 +276,57 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
 # NOVA FUNÇÃO: Adicionada a função de classificação e quantificação do NDVI
 # Substitua a sua função antiga por esta versão no seu arquivo main.py
 
+# Substitua a função inteira no seu arquivo main.py
+
 async def classify_and_quantify_ndvi_all(
     original_image: ee.Image, 
-    ndvi_image: ee.Image, 
+    ndvi_image: ee.Image, # Embora o nome seja ndvi_image, ele não será usado para classificação de solo/veg
     geometry: ee.Geometry, 
     pixel_area: float, 
     scale: int, 
     is_landsat: bool
 ) -> Dict[str, float]:
     """
-    Classifica a cobertura do solo usando um método híbrido: NDWI para água e 
-    NDVI para as classes de terra (solo e vegetação). Retorna a área de cada 
-    classe em hectares.
+    Classifica a cobertura do solo com a melhor ferramenta para cada classe:
+    - NDWI para Água
+    - SAVI para Solo vs. Vegetação
+    Retorna a área de cada classe em hectares.
     """
-    # PASSO 1: Calcular NDWI a partir da imagem original para identificar a Água.
-    # Esta abordagem é muito mais precisa que usar o NDVI para detectar água.
+    # PASSO 1: Calcular NDWI para Água (método atual e correto)
     scaled_image = get_image_bands(original_image, is_landsat)
     green_band = 'SR_B3' if is_landsat else 'B3'
     nir_band = 'SR_B5' if is_landsat else 'B8'
+    red_band = 'SR_B4' if is_landsat else 'B4'
+    
     ndwi_image = scaled_image.normalizedDifference([green_band, nir_band]).rename('NDWI')
-    
-    # A regra padrão e robusta para NDWI é: valores > 0 são água.
     water_mask = ndwi_image.gt(0)
-    
-    # PASSO 2: Criar uma máscara de terra (onde não é água) para as próximas etapas.
     land_mask = water_mask.Not()
 
-    # PASSO 3: Usar o NDVI (já calculado e passado como 'ndvi_image') para classificar
-    # apenas os pixels de terra, aplicando a máscara.
-    ndvi_land_only = ndvi_image.updateMask(land_mask)
+    # --- ALTERAÇÃO PRINCIPAL: Usar SAVI em vez de NDVI ---
+    # PASSO 2: Calcular SAVI para diferenciar Solo de Vegetação
+    # SAVI = ((NIR - Red) / (NIR + Red + L)) * (1 + L), com L=0.5
+    savi_image = scaled_image.expression(
+        '((NIR - RED) / (NIR + RED + L)) * (1 + L)', {
+            'NIR': scaled_image.select(nir_band),
+            'RED': scaled_image.select(red_band),
+            'L': 0.5
+        }
+    ).rename('SAVI')
 
-    # Os limiares de NDVI agora são aplicados apenas na área de terra.
-    # O limiar da água foi ajustado para 0.1 anteriormente, o que se mantém aqui para o solo.
-    solo_mask = ndvi_land_only.gte(0.1).And(ndvi_land_only.lt(0.2))
-    veg_rala_mask = ndvi_land_only.gte(0.2).And(ndvi_land_only.lt(0.5))
-    veg_densa_mask = ndvi_land_only.gte(0.5)
+    # PASSO 3: Aplicar a máscara de terra e classificar com base no SAVI
+    savi_land_only = savi_image.updateMask(land_mask)
 
-    # PASSO 4: Calcular a área de cada uma das quatro classes.
+    # Novos limiares baseados em SAVI, que é mais eficaz para separar solo
+    # Aumentamos o limiar para solo, pois SAVI para solo é geralmente mais baixo que o NDVI
+    solo_mask = savi_land_only.lt(0.25)
+    veg_rala_mask = savi_land_only.gte(0.25).And(savi_land_only.lt(0.5))
+    veg_densa_mask = savi_land_only.gte(0.5)
+    # --- FIM DA ALTERAÇÃO PRINCIPAL ---
+
+    # PASSO 4: Calcular a área de cada classe (lógica inalterada)
     async def async_sum_mask(mask: ee.Image) -> float:
         """Função auxiliar para executar a redução de forma assíncrona."""
         def blocking_reduce():
-            # Renomeia a banda para um nome genérico para o reducer encontrar
             result = mask.rename('classification').reduceRegion(
                 reducer=ee.Reducer.sum(),
                 geometry=geometry,
@@ -327,15 +337,13 @@ async def classify_and_quantify_ndvi_all(
         
         return await asyncio.to_thread(blocking_reduce)
 
-    # Executa todas as contagens de pixels concorrentemente
     agua_count, solo_count, veg_rala_count, veg_densa_count = await asyncio.gather(
-        async_sum_mask(water_mask),      # Usa a máscara de água do NDWI
-        async_sum_mask(solo_mask),       # Usa as máscaras de terra do NDVI
+        async_sum_mask(water_mask),
+        async_sum_mask(solo_mask),
         async_sum_mask(veg_rala_mask),
         async_sum_mask(veg_densa_mask)
     )
 
-    # Converte a contagem de pixels de cada classe para hectares
     area_agua = (agua_count * pixel_area) / 10000
     area_solo_exposto = (solo_count * pixel_area) / 10000
     area_vegetacao_rala = (veg_rala_count * pixel_area) / 10000

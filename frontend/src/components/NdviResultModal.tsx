@@ -1,35 +1,45 @@
-// src/components/NdviResultModal.tsx
+// src/components/NdviResultPanel.tsx
 
-import React from 'react';
+import React, { useRef } from 'react';
+import Draggable from 'react-draggable';
+import { ResizableBox } from 'react-resizable';
 import type { NdviAreas } from '../MainApplication';
-import NdviClassificationChart from './NDVIQuantitativos';
+import NdviClassificationChart from './NdviClassificationChart';
 
 interface Props {
   data: NdviAreas;
-  onClose: () => void; // Função para fechar o modal
+  onClose: () => void;
 }
 
-const NdviResultModal: React.FC<Props> = ({ data, onClose }) => {
-  // Impede que o clique dentro do modal feche a janela
-  const handleContentClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
+const NdviResultPanel: React.FC<Props> = ({ data, onClose }) => {
+  const nodeRef = useRef(null);
 
   return (
-    // O overlay escuro que cobre a tela
-    <div className="modal-overlay" onClick={onClose}>
-      {/* O container do conteúdo do modal */}
-      <div className="modal-content" onClick={handleContentClick}>
-        <div className="modal-header">
+    <Draggable
+      nodeRef={nodeRef}
+      handle=".panel-header"
+      bounds=".app-container" // <-- ALTERAÇÃO PRINCIPAL APLICADA AQUI
+      defaultPosition={{x: 50, y: 50}}
+    >
+      <ResizableBox
+        ref={nodeRef}
+        width={500}
+        height={620}
+        minConstraints={[380, 450]}
+        maxConstraints={[800, 900]}
+        className="floating-panel-box"
+        handle={<span className="react-resizable-handle react-resizable-handle-se" />}
+      >
+        <div className="panel-header">
           <h3>Resultados da Análise NDVI</h3>
-          <button onClick={onClose} className="modal-close-button">&times;</button>
+          <button onClick={onClose} className="panel-close-button">&times;</button>
         </div>
-        <div className="modal-body">
+        <div className="panel-body">
           <NdviClassificationChart data={data} />
         </div>
-      </div>
-    </div>
+      </ResizableBox>
+    </Draggable>
   );
 };
 
-export default NdviResultModal;
+export default NdviResultPanel;
