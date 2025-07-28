@@ -274,46 +274,68 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
     return calculated
 
 # NOVA FUNÇÃO: Adicionada a função de classificação e quantificação do NDVI
-async def classify_and_quantify_ndvi_all(ndvi_image: ee.Image, geometry: ee.Geometry, pixel_area: float = 900.0, scale: int = 30) -> Dict[str, float]:
-    """
-    Classifica NDVI em quatro classes e retorna área de cada uma em hectares.
-    Esta função foi adaptada para ser assíncrona e não bloquear o servidor.
-    """
-    # Define as máscaras para cada classe de cobertura do solo
-    agua_mask = ndvi_image.lt(0.05)
-    solo_mask = ndvi_image.gte(0.05).And(ndvi_image.lt(0.2))
-    veg_rala_mask = ndvi_image.gte(0.2).And(ndvi_image.lt(0.5))
-    veg_densa_mask = ndvi_image.gte(0.5)
+# Substitua a sua função antiga por esta versão no seu arquivo main.py
 
+async def classify_and_quantify_ndvi_all(
+    original_image: ee.Image, 
+    ndvi_image: ee.Image, 
+    geometry: ee.Geometry, 
+    pixel_area: float, 
+    scale: int, 
+    is_landsat: bool
+) -> Dict[str, float]:
+    """
+    Classifica a cobertura do solo usando um método híbrido: NDWI para água e 
+    NDVI para as classes de terra (solo e vegetação). Retorna a área de cada 
+    classe em hectares.
+    """
+    # PASSO 1: Calcular NDWI a partir da imagem original para identificar a Água.
+    # Esta abordagem é muito mais precisa que usar o NDVI para detectar água.
+    scaled_image = get_image_bands(original_image, is_landsat)
+    green_band = 'SR_B3' if is_landsat else 'B3'
+    nir_band = 'SR_B5' if is_landsat else 'B8'
+    ndwi_image = scaled_image.normalizedDifference([green_band, nir_band]).rename('NDWI')
+    
+    # A regra padrão e robusta para NDWI é: valores > 0 são água.
+    water_mask = ndwi_image.gt(0)
+    
+    # PASSO 2: Criar uma máscara de terra (onde não é água) para as próximas etapas.
+    land_mask = water_mask.Not()
+
+    # PASSO 3: Usar o NDVI (já calculado e passado como 'ndvi_image') para classificar
+    # apenas os pixels de terra, aplicando a máscara.
+    ndvi_land_only = ndvi_image.updateMask(land_mask)
+
+    # Os limiares de NDVI agora são aplicados apenas na área de terra.
+    # O limiar da água foi ajustado para 0.1 anteriormente, o que se mantém aqui para o solo.
+    solo_mask = ndvi_land_only.gte(0.1).And(ndvi_land_only.lt(0.2))
+    veg_rala_mask = ndvi_land_only.gte(0.2).And(ndvi_land_only.lt(0.5))
+    veg_densa_mask = ndvi_land_only.gte(0.5)
+
+    # PASSO 4: Calcular a área de cada uma das quatro classes.
     async def async_sum_mask(mask: ee.Image) -> float:
         """Função auxiliar para executar a redução de forma assíncrona."""
-        # A função de redução do GEE é bloqueante, então a executamos em um thread separado
         def blocking_reduce():
-            # A máscara já tem valor 1 onde a condição é verdadeira, e 0 (ou mascarado) onde é falsa.
-            # O redutor 'sum()' irá somar esses '1's, resultando na contagem de pixels.
-            # A banda do NDVI é renomeada para 'NDVI', então o resultado estará sob essa chave.
-            result = mask.rename('NDVI').reduceRegion(
+            # Renomeia a banda para um nome genérico para o reducer encontrar
+            result = mask.rename('classification').reduceRegion(
                 reducer=ee.Reducer.sum(),
                 geometry=geometry,
                 scale=scale,
                 maxPixels=1e10
             ).getInfo()
-            # Retorna a contagem de pixels, ou 0 se a chave não for encontrada
-            return result.get('NDVI', 0)
+            return result.get('classification', 0)
         
-        # Executa a função bloqueante em um thread separado e aguarda o resultado
         return await asyncio.to_thread(blocking_reduce)
 
     # Executa todas as contagens de pixels concorrentemente
     agua_count, solo_count, veg_rala_count, veg_densa_count = await asyncio.gather(
-        async_sum_mask(agua_mask),
-        async_sum_mask(solo_mask),
+        async_sum_mask(water_mask),      # Usa a máscara de água do NDWI
+        async_sum_mask(solo_mask),       # Usa as máscaras de terra do NDVI
         async_sum_mask(veg_rala_mask),
         async_sum_mask(veg_densa_mask)
     )
 
-    # Calcula a área em hectares para cada classe
-    # Área (ha) = (número de pixels * área de um pixel em m²) / 10000 m²/ha
+    # Converte a contagem de pixels de cada classe para hectares
     area_agua = (agua_count * pixel_area) / 10000
     area_solo_exposto = (solo_count * pixel_area) / 10000
     area_vegetacao_rala = (veg_rala_count * pixel_area) / 10000
@@ -575,7 +597,6 @@ async def get_image_preview_layer(request: ImagePreviewRequest):
         print(f"❌ Erro ao gerar preview: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao gerar preview: {e}")
 
-# ROTA MODIFICADA: para calcular e retornar a quantificação do NDVI
 @app.post("/api/earth-images/indices", response_model=IndicesResponse, tags=["Google Earth Engine"])
 async def generate_indices(request: IndicesRequest):
     """Calcula múltiplos índices e retorna URLs para visualização, download e quantificação NDVI."""
@@ -585,7 +606,7 @@ async def generate_indices(request: IndicesRequest):
         
         is_landsat = "LANDSAT" in request.satellite
         geometry = create_ee_geometry_from_json(request.polygon)
-        image = ee.Image(request.imageId)
+        image = ee.Image(request.imageId) # Imagem original com todas as bandas
         calculated_indices = calculate_indices_gee(image, is_landsat, request.indices)
         
         results = []
@@ -595,27 +616,30 @@ async def generate_indices(request: IndicesRequest):
             clipped_index_image = index_image.clip(geometry)
             classification_data = None
             
-            # --- NOVA LÓGICA DE CLASSIFICAÇÃO NDVI ---
             if index_name.upper() == "NDVI":
                 scale = 10 if "SENTINEL" in request.satellite.upper() else 30
-                pixel_area = scale * scale  # Área do pixel em m² (10x10=100 para Sentinel, 30x30=900 para Landsat)
+                pixel_area = scale * scale
                 sensor_str = "Sentinel" if "SENTINEL" in request.satellite.upper() else "Landsat"
                 
-                # Chama a função de quantificação
+                # --- ALTERAÇÃO PRINCIPAL ---
+                # Chama a função de quantificação passando a imagem original (para o NDWI),
+                # a imagem de NDVI, a geometria e outros parâmetros necessários.
                 ndvi_areas = await classify_and_quantify_ndvi_all(
-                    clipped_index_image, geometry, pixel_area=pixel_area, scale=scale
+                    image,                  # <-- Passa a imagem original
+                    clipped_index_image,    # <-- Passa a imagem do NDVI
+                    geometry,
+                    pixel_area=pixel_area,
+                    scale=scale,
+                    is_landsat=is_landsat   # <-- Passa a informação do sensor
                 )
                 
-                # Adiciona metadados ao resultado
                 ndvi_areas.update({
                     "pixel_area_m2": pixel_area,
                     "scale_m": scale,
                     "sensor": sensor_str,
                 })
                 classification_data = ndvi_areas
-            # --- FIM DA NOVA LÓGICA ---
-
-            # Gera URLs de visualização e download
+            
             map_id_task = asyncio.to_thread(clipped_index_image.getMapId, vis_params_index)
             download_url_task = asyncio.to_thread(clipped_index_image.getDownloadURL, {
                 'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
@@ -627,7 +651,7 @@ async def generate_indices(request: IndicesRequest):
                 indexName=index_name,
                 imageUrl=map_id['tile_fetcher'].url_format,
                 downloadUrl=download_url,
-                classification=classification_data # Adiciona os dados de classificação ao resultado
+                classification=classification_data
             ))
         
         bounds_info = await asyncio.to_thread(geometry.bounds().getInfo)
