@@ -3,24 +3,21 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
-import type { Property } from './components/SidebarCadastro'; // onde estiver declarado
+import type { Property } from './components/SidebarCadastro';
 // Importa os componentes da interface
 import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
-import NdviResultModal from './components/NdviResultModal'; // <-- ALTERAÇÃO: Importa o novo componente Modal
+import NdviResultPanel from './components/NdviResultPanel';
+import ChangeDetectionPanel from './components/ChangeDetectionPanel'; // <-- 1. IMPORTE O NOVO PAINEL
 
-// ✅ CORREÇÃO: Importa MapStateProvider
 import { MapStateProvider } from './context/MapStateContext'; 
 
 // Importa estilos e bibliotecas auxiliares
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
-
-import ChangeResultModal from './components/ChangeResultModal'; // ✅ Importa o novo componente
-
 
 // --- DEFINIÇÃO DE TIPOS E INTERFACES ---
 export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
@@ -92,11 +89,10 @@ export default function MainApplication() {
     const [isReadOnly, setIsReadOnly] = useState(true);
 
     const [ndviAreas, setNdviAreas] = useState<NdviAreas | null>(null);
-
-
     const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
 
-    const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number } | null>(null);
+    // 2. ATUALIZE O TIPO DO ESTADO 'changeAreas'
+    const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number; total: number } | null>(null);
 
     useEffect(() => {
         const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({ id: `index-${index.indexName}`, date: index.indexName, thumbnailUrl: INDEX_LAYER_ICON_URI }));
@@ -223,7 +219,12 @@ export default function MainApplication() {
             const data = await res.json();
             setDifferenceLayerUrl(data.differenceImageUrl);
             
-            setChangeAreas({ gain: data.gainAreaHa, loss: data.lossAreaHa });
+            // 3. ATUALIZE A CHAMADA DO setChangeAreas PARA INCLUIR A ÁREA TOTAL
+            setChangeAreas({ 
+                gain: data.gainAreaHa, 
+                loss: data.lossAreaHa, 
+                total: data.totalAreaHa 
+            });
 
             if (data.changeGeoJson && data.changeGeoJson.features.length > 0) {
                 setChangePolygons(data.changeGeoJson);
@@ -344,7 +345,6 @@ const handleSubmitProperty = useCallback(() => {
     setSelectedProperty(null);
 }, []);
 
-    // <-- ALTERAÇÃO: Adiciona a função para fechar o modal
     const handleCloseNdviModal = useCallback(() => {
         setNdviAreas(null);
     }, []);
@@ -429,16 +429,19 @@ const handleSubmitProperty = useCallback(() => {
                         )}
                     </main>
                 </div>
+                
+                {/* 4. SUBSTITUA O ANTIGO MODAL PELO NOVO PAINEL */}
                 {changeAreas && (
-                    <ChangeResultModal
+                    <ChangeDetectionPanel
                         gainArea={changeAreas.gain}
                         lossArea={changeAreas.loss}
+                        totalArea={changeAreas.total}
                         onClose={() => setChangeAreas(null)}
                     />
                 )}
-                {/* <-- ALTERAÇÃO: Renderiza o modal de resultados NDVI condicionalmente --> */}
+                
                 {ndviAreas && (
-                    <NdviResultModal 
+                    <NdviResultPanel 
                         data={ndviAreas}
                         onClose={handleCloseNdviModal}
                     />

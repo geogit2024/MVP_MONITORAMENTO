@@ -158,6 +158,7 @@ class ChangeDetectionResponse(BaseModel):
     differenceImageUrl: Optional[str] = None
     gainAreaHa: float
     lossAreaHa: float
+    totalAreaHa: float
 
 class DownloadInfoRequest(BaseModel):
     imageId: str
@@ -685,7 +686,10 @@ async def generate_indices(request: IndicesRequest):
 
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 async def detect_changes(request: ChangeDetectionRequest):
-    """Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas e retorna os resultados."""
+    """
+    Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas
+    e retorna os resultados.
+    """
     try:
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
@@ -717,10 +721,15 @@ async def detect_changes(request: ChangeDetectionRequest):
 
         gain_area_value_task = asyncio.to_thread(gain_polygons.geometry().area(maxError=1).divide(10000).getInfo)
         loss_area_value_task = asyncio.to_thread(loss_polygons.geometry().area(maxError=1).divide(10000).getInfo)
+        total_area_value_task = asyncio.to_thread(geometry.area(maxError=1).divide(10000).getInfo)
         
-        gain_area_value, loss_area_value = await asyncio.gather(gain_area_value_task, loss_area_value_task)
+        gain_area_value, loss_area_value, total_area_value = await asyncio.gather(
+            gain_area_value_task, loss_area_value_task, total_area_value_task
+        )
+        
         gain_area_value = gain_area_value or 0.0
         loss_area_value = loss_area_value or 0.0
+        total_area_value = total_area_value or 0.0
 
         change_geojson = await asyncio.to_thread(smoothed_vectors.getInfo)
 
@@ -732,15 +741,15 @@ async def detect_changes(request: ChangeDetectionRequest):
             changeGeoJson=change_geojson, 
             differenceImageUrl=diff_url,
             gainAreaHa=gain_area_value,
-            lossAreaHa=loss_area_value
+            lossAreaHa=loss_area_value,
+            totalAreaHa=total_area_value
         )
     except asyncio.CancelledError:
         print("⚠️  Detecção de mudanças cancelada.")
         raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisição foi cancelada ou excedeu o tempo limite.")
     except Exception as e:
         print(f"❌ Erro ao detectar mudanças: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
-
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao detectar mudanças: {e}")
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 async def get_download_info(request: DownloadInfoRequest):
     """Gera e retorna uma URL de download para a imagem original (GeoTIFF) recortada pela AOI."""
