@@ -4,17 +4,15 @@ import React, { useState, useCallback, useEffect } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
 import type { Property } from './components/SidebarCadastro';
-// Importa os componentes da interface
 import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
 import NdviResultPanel from './components/NdviResultPanel';
-import ChangeDetectionPanel from './components/ChangeDetectionPanel'; // <-- 1. IMPORTE O NOVO PAINEL
+import ChangeDetectionPanel from './components/ChangeDetectionPanel';
 
 import { MapStateProvider } from './context/MapStateContext'; 
 
-// Importa estilos e bibliotecas auxiliares
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
@@ -91,7 +89,6 @@ export default function MainApplication() {
     const [ndviAreas, setNdviAreas] = useState<NdviAreas | null>(null);
     const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
 
-    // 2. ATUALIZE O TIPO DO ESTADO 'changeAreas'
     const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number; total: number } | null>(null);
 
     useEffect(() => {
@@ -219,7 +216,6 @@ export default function MainApplication() {
             const data = await res.json();
             setDifferenceLayerUrl(data.differenceImageUrl);
             
-            // 3. ATUALIZE A CHAMADA DO setChangeAreas PARA INCLUIR A ÁREA TOTAL
             setChangeAreas({ 
                 gain: data.gainAreaHa, 
                 loss: data.lossAreaHa, 
@@ -430,13 +426,14 @@ const handleSubmitProperty = useCallback(() => {
                     </main>
                 </div>
                 
-                {/* 4. SUBSTITUA O ANTIGO MODAL PELO NOVO PAINEL */}
+                {/* ALTERAÇÃO: Passa a propriedade 'initialPosition' para cada painel */}
                 {changeAreas && (
                     <ChangeDetectionPanel
                         gainArea={changeAreas.gain}
                         lossArea={changeAreas.loss}
                         totalArea={changeAreas.total}
                         onClose={() => setChangeAreas(null)}
+                        initialPosition={{ x: 570, y: 70 }}
                     />
                 )}
                 
@@ -444,6 +441,7 @@ const handleSubmitProperty = useCallback(() => {
                     <NdviResultPanel 
                         data={ndviAreas}
                         onClose={handleCloseNdviModal}
+                        initialPosition={{ x: 50, y: 70 }}
                     />
                 )}
             </div>

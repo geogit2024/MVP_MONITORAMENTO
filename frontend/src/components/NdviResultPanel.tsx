@@ -6,20 +6,23 @@ import { ResizableBox } from 'react-resizable';
 import type { NdviAreas } from '../MainApplication';
 import NdviClassificationChart from './NdviClassificationChart';
 
+// 1. ADICIONE 'initialPosition' ÀS PROPRIEDADES
 interface Props {
   data: NdviAreas;
   onClose: () => void;
+  initialPosition: { x: number, y: number };
 }
 
-const NdviResultPanel: React.FC<Props> = ({ data, onClose }) => {
+const NdviResultPanel: React.FC<Props> = ({ data, onClose, initialPosition }) => {
   const nodeRef = useRef(null);
 
   return (
     <Draggable
       nodeRef={nodeRef}
       handle=".panel-header"
-      bounds=".app-container" // <-- ALTERAÇÃO PRINCIPAL APLICADA AQUI
-      defaultPosition={{x: 50, y: 50}}
+      bounds=".app-container"
+      // 2. USE A PROPRIEDADE EM VEZ DE UM VALOR FIXO
+      defaultPosition={initialPosition}
     >
       <ResizableBox
         ref={nodeRef}
