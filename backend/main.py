@@ -684,21 +684,30 @@ async def generate_indices(request: IndicesRequest):
         print(f"❌ Erro inesperado ao gerar índices: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
+# Substitua a função original em seu main.py por esta
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 async def detect_changes(request: ChangeDetectionRequest):
     """
-    Detecta mudanças entre duas imagens, suaviza os polígonos, calcula as áreas
-    e retorna os resultados.
+    Detecta mudanças, aplica filtros, suaviza os polígonos, RECORTA pelos limites da AOI,
+    calcula as áreas e retorna os resultados.
     """
     try:
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
-        geometry = create_ee_geometry_from_json(request.polygon)
+        geometry = create_ee_geometry_from_json(request.polygon) # Esta é a nossa AOI
         is_landsat = "LANDSAT" in request.satellite
 
         before_ndvi = calculate_indices_gee(before_image, is_landsat, ['NDVI'])['NDVI']
         after_ndvi = calculate_indices_gee(after_image, is_landsat, ['NDVI'])['NDVI']
-        
+
+        # --- NOVA ETAPA: MÁSCARA DE VEGETAÇÃO INICIAL ---
+        # Define um limiar mínimo de NDVI para considerar uma área como "vegetada"
+        # na imagem "antes". Pixels abaixo disso serão ignorados.
+        VEGETATION_THRESHOLD = 0.3
+        vegetation_mask = before_ndvi.gte(VEGETATION_THRESHOLD)
+        # Aplica a máscara em ambas as imagens de NDVI
+        before_ndvi = before_ndvi.updateMask(vegetation_mask)
+        after_ndvi = after_ndvi.updateMask(vegetation_mask)
         ndvi_difference = after_ndvi.subtract(before_ndvi)
         threshold = request.threshold or 0.25
         
@@ -707,17 +716,42 @@ async def detect_changes(request: ChangeDetectionRequest):
         
         change_map = ee.Image(0).where(gain_mask, 2).where(loss_mask, 1).selfMask()
 
-        change_vectors = change_map.reduceToVectors(
+        kernel = ee.Kernel.square(radius=1, units='pixels')
+        cleaned_map = change_map.focal_min(kernel=kernel, iterations=1) \
+                                .focal_max(kernel=kernel, iterations=1)
+
+        change_vectors = cleaned_map.reduceToVectors(
             geometry=geometry, scale=30, geometryType='polygon',
             eightConnected=False, labelProperty='change_type', maxPixels=1e10
         )
 
-        def smooth_feature(feature):
-            return feature.buffer(10, maxError=1).buffer(-10, maxError=1)
+        # Parâmetros para as operações, podem ser ajustados
+        SMOOTHING_RADIUS = 20
+        ERROR_TOLERANCE = 20
 
-        smoothed_vectors = change_vectors.map(smooth_feature)
-        gain_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 2))
-        loss_polygons = smoothed_vectors.filter(ee.Filter.eq('change_type', 1))
+        # --- FUNÇÃO ATUALIZADA ---
+        # Agora ela suaviza E recorta o resultado pela AOI
+        def smooth_and_clip_feature(feature):
+            # 1. Realiza a suavização combinando buffer e simplificação
+            smoothed_geometry = feature.geometry() \
+                                   .buffer(SMOOTHING_RADIUS, maxError=1) \
+                                   .buffer(-SMOOTHING_RADIUS, maxError=1) \
+                                   .simplify(maxError=ERROR_TOLERANCE)
+            
+            # 2. --- NOVA ETAPA CRÍTICA ---
+            # Recorta (clip) a geometria suavizada com os limites da AOI original.
+            # Isso garante que o polígono não "vaze" para fora.
+            clipped_geometry = smoothed_geometry.intersection(geometry, maxError=1)
+            
+            # 3. Retorna o feature com sua geometria atualizada (agora suave e recortada)
+            return feature.setGeometry(clipped_geometry)
+
+        # Aplica a função de suavizar E RECORTAR a cada polígono detectado
+        final_vectors = change_vectors.map(smooth_and_clip_feature)
+        
+        # O resto do código agora usa 'final_vectors'
+        gain_polygons = final_vectors.filter(ee.Filter.eq('change_type', 2))
+        loss_polygons = final_vectors.filter(ee.Filter.eq('change_type', 1))
 
         gain_area_value_task = asyncio.to_thread(gain_polygons.geometry().area(maxError=1).divide(10000).getInfo)
         loss_area_value_task = asyncio.to_thread(loss_polygons.geometry().area(maxError=1).divide(10000).getInfo)
@@ -731,7 +765,7 @@ async def detect_changes(request: ChangeDetectionRequest):
         loss_area_value = loss_area_value or 0.0
         total_area_value = total_area_value or 0.0
 
-        change_geojson = await asyncio.to_thread(smoothed_vectors.getInfo)
+        change_geojson = await asyncio.to_thread(final_vectors.getInfo)
 
         diff_vis_params = {'min': -0.5, 'max': 0.5, 'palette': ['red', '#ffcccb', 'white', '#90ee90', 'green']}
         diff_map_id = await asyncio.to_thread(ndvi_difference.clip(geometry).getMapId, diff_vis_params)
@@ -750,6 +784,8 @@ async def detect_changes(request: ChangeDetectionRequest):
     except Exception as e:
         print(f"❌ Erro ao detectar mudanças: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao detectar mudanças: {e}")
+
+    
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 async def get_download_info(request: DownloadInfoRequest):
     """Gera e retorna uma URL de download para a imagem original (GeoTIFF) recortada pela AOI."""
