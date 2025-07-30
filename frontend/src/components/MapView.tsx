@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, useMap, GeoJSON } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
-import { Feature, FeatureCollection } from 'geojson';
+import { Feature, FeatureCollection, Polygon } from 'geojson';
 import FirmsDataLayer from './FirmsDataLayer';
 import PrecipitationLayer from './PrecipitationLayer';
 import 'leaflet/dist/leaflet.css';
@@ -10,10 +10,10 @@ import '@geoman-io/leaflet-geoman-free';
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
-
 import BaseMapSelector from './BaseMapSelector';
 
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+// Corrige ícones padrão
+(L.Icon.Default.prototype as any)._getIconUrl = undefined;
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
 export const fireIcon = new L.Icon({
@@ -59,14 +59,25 @@ const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) 
   return null;
 };
 
-const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete: (geojson: Feature) => void, drawingEnabled: boolean }) => {
+const GeomanDrawControl = ({
+  onDrawComplete,
+  drawingEnabled,
+  isDrawingTalhao,
+  onTalhaoDrawComplete
+}: {
+  onDrawComplete: (geojson: Feature) => void;
+  drawingEnabled: boolean;
+  isDrawingTalhao?: boolean;
+  onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
+}) => {
   const map = useMap();
 
   useEffect(() => {
     if (!map.pm) return;
+
     map.pm.addControls({
       position: 'topleft',
-      drawPolygon: true,
+      drawPolygon: drawingEnabled || isDrawingTalhao,
       drawCircle: false,
       removalMode: true,
       drawMarker: false,
@@ -81,13 +92,17 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
     map.pm.setPathOptions({ color: '#ff7800', fill: false, weight: 3 });
 
     const handleCreate = (e: any) => {
+      const geojson = e.layer.toGeoJSON() as Feature<Polygon>;
+      if (isDrawingTalhao && onTalhaoDrawComplete) {
+        onTalhaoDrawComplete(geojson);
+      } else {
+        onDrawComplete(geojson);
+      }
       map.pm.getGeomanLayers().forEach(layer => {
         if (layer._leaflet_id !== e.layer._leaflet_id) {
           layer.remove();
         }
       });
-      const geojson = e.layer.toGeoJSON() as Feature;
-      onDrawComplete(geojson);
       map.pm.disableDraw();
     };
 
@@ -97,16 +112,17 @@ const GeomanDrawControl = ({ onDrawComplete, drawingEnabled }: { onDrawComplete:
       map.pm.removeControls();
       map.off('pm:create', handleCreate);
     };
-  }, [map, onDrawComplete]);
+  }, [map, drawingEnabled, isDrawingTalhao, onTalhaoDrawComplete, onDrawComplete]);
 
   useEffect(() => {
     if (!map.pm) return;
-    if (drawingEnabled) {
+
+    if (drawingEnabled || isDrawingTalhao) {
       map.pm.enableDraw('Polygon');
     } else {
       map.pm.disableDraw();
     }
-  }, [drawingEnabled, map]);
+  }, [drawingEnabled, isDrawingTalhao, map]);
 
   return null;
 };
@@ -161,6 +177,8 @@ interface MapViewProps {
   drawingEnabled: boolean;
   onPropertySelect: (id: string) => void;
   refreshTrigger: any;
+  isDrawingTalhao?: boolean;
+  onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
 }
 
 export default function MapView({
@@ -178,12 +196,15 @@ export default function MapView({
   previewLayerZIndex,
   drawingEnabled,
   onPropertySelect,
-  refreshTrigger
+  refreshTrigger,
+  isDrawingTalhao,
+  onTalhaoDrawComplete
 }: MapViewProps) {
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
   const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
 
   const fetchProperties = async () => {
     try {
@@ -199,6 +220,30 @@ export default function MapView({
   useEffect(() => {
     fetchProperties();
   }, [refreshTrigger]);
+
+  useEffect(() => {
+    if (!mapRef.current || !isDrawingTalhao) return;
+
+    const map = mapRef.current;
+    map.pm.enableDraw('Polygon', {
+      snappable: true,
+      continueDrawing: false,
+    });
+
+    const handleCreate = (e: any) => {
+      const geojson = e.layer.toGeoJSON() as Feature<Polygon>;
+      onTalhaoDrawComplete?.(geojson);
+      map.pm.disableDraw();
+      map.off('pm:create', handleCreate);
+    };
+
+    map.on('pm:create', handleCreate);
+
+    return () => {
+      map.off('pm:create', handleCreate);
+      map.pm.disableDraw();
+    };
+  }, [isDrawingTalhao]);
 
   const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
   const propertyLayerStyle = {
@@ -239,69 +284,43 @@ export default function MapView({
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
 
-      <MapContainer center={[-22.505, -43.179]} zoom={13} style={{ height: '100%', width: '100%' }}>
+      <MapContainer
+        center={[-22.505, -43.179]}
+        zoom={13}
+        style={{ height: '100%', width: '100%' }}
+        whenCreated={(map) => (mapRef.current = map)}
+      >
         <TileLayer
           key={baseMapKey}
           url={activeBaseMap.url}
           attribution={activeBaseMap.attribution}
         />
         <MapViewAnimator target={mapViewTarget} />
-        <GeomanDrawControl onDrawComplete={onDrawComplete} drawingEnabled={drawingEnabled} />
-        <DynamicTileLayer
-          url={visibleLayerUrl}
-          zIndex={indexLayerZIndex}
-          attribution="Índice Calculado"
-        />
-        <DynamicTileLayer
-          url={previewLayerUrl}
-          zIndex={previewLayerZIndex}
-          attribution="Pré-visualização"
-        />
-        <DynamicTileLayer
-          url={differenceLayerUrl}
-          zIndex={differenceLayerZIndex}
-          opacity={0.7}
-          attribution="Diferença NDVI"
-        />
-        {activeAoi && (
-          <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />
-        )}
-        {changePolygons && (
-          <GeoJSON
-            key={JSON.stringify(changePolygons)}
-            data={changePolygons}
-            style={changePolygonStyle}
-          />
-        )}
-        {propertiesData && (
-          <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />
-        )}
+        <GeomanDrawControl 
+  onDrawComplete={onDrawComplete}
+  drawingEnabled={drawingEnabled}
+  isDrawingTalhao={isDrawingTalhao}
+  onTalhaoDrawComplete={onTalhaoDrawComplete}
+/>
+        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
+        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
+        <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
+
+        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi)} data={activeAoi} style={aoiStyle} />}
+        {changePolygons && <GeoJSON key={JSON.stringify(changePolygons)} data={changePolygons} style={changePolygonStyle} />}
+        {propertiesData && <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />}
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />
       </MapContainer>
 
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '20px',
-          left: '10px',
-          zIndex: 1001,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px'
-        }}
-      >
+      <div style={{ position: 'absolute', bottom: '20px', left: '10px', zIndex: 1001, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <button className="map-layer-button firms" onClick={() => setShowFirmsPoints(p => !p)}>
           {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
         </button>
-        <button
-          className="map-layer-button precipitation"
-          onClick={() => setShowPrecipitation(p => !p)}
-        >
+        <button className="map-layer-button precipitation" onClick={() => setShowPrecipitation(p => !p)}>
           {showPrecipitation ? 'Ocultar Precipitação' : 'Mostrar Precipitação'}
         </button>
       </div>
     </div>
   );
 }
-

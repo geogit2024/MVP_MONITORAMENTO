@@ -4,6 +4,7 @@ import L, { LatLngBoundsExpression } from 'leaflet';
 import MapView from '../components/MapView';
 import SidebarCadastro from '../components/SidebarCadastro';
 import PropertyForm from '../components/PropertyForm';
+import TalhaoForm from '../components/TalhaoForm';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
 import './PropertyRegistrationPage.css';
@@ -36,8 +37,10 @@ const PropertyRegistrationPage = () => {
   const [prefilledData, setPrefilledData] = useState<Partial<Property> | null>(null);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isFormReadOnly, setIsFormReadOnly] = useState(true);
+  const [isDrawingTalhao, setIsDrawingTalhao] = useState(false);
+  const [talhaoGeometry, setTalhaoGeometry] = useState<Feature<Polygon> | null>(null);
+  const [showTalhaoModal, setShowTalhaoModal] = useState(false);
 
-  // CONTROLE DO MAPA BASE (NOVO!)
   const [baseMapKey, setBaseMapKey] = useState('satellite');
 
   const clearSelectionAndCloseForm = () => {
@@ -111,8 +114,6 @@ const PropertyRegistrationPage = () => {
         if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
         const fullPropertyDetails: Property = await response.json();
 
-        console.log("Geometria carregada do backend:", fullPropertyDetails.geometry);
-
         setSelectedProperty(fullPropertyDetails);
 
         const featureGeo = fullPropertyDetails.geometry.type === "Feature"
@@ -178,6 +179,7 @@ const PropertyRegistrationPage = () => {
       } else {
         kmlText = await file.text();
       }
+
       const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
       const geojson = togeojson.kml(dom) as FeatureCollection;
       const polygonFeature = geojson.features.find(
@@ -192,6 +194,11 @@ const PropertyRegistrationPage = () => {
       alert(`Erro ao processar o ficheiro: ${error.message}`);
     }
   }, [handleGeometryDefined]);
+
+  const handleCadastrarTalhao = () => {
+    setIsDrawingTalhao(true);
+    setTalhaoGeometry(null);
+  };
 
   return (
     <div className="main-view">
@@ -228,6 +235,14 @@ const PropertyRegistrationPage = () => {
             indexLayerZIndex={10}
             differenceLayerZIndex={10}
             previewLayerZIndex={10}
+            isDrawingTalhao={isDrawingTalhao}
+            onTalhaoDrawComplete={(geometry) => {
+              const area = turf.area(geometry) / 10000;
+              geometry.properties = { ...geometry.properties, area_ha: area };
+              setTalhaoGeometry(geometry);
+              setShowTalhaoModal(true);
+              setIsDrawingTalhao(false);
+            }}
           />
         </div>
       </main>
@@ -248,11 +263,27 @@ const PropertyRegistrationPage = () => {
             onEdit={handleEditForm}
             onDelete={selectedProperty ? handleDeleteProperty : () => {}} 
             onSegmentationComplete={() => {}}
+            onCadastrarTalhao={handleCadastrarTalhao}
           />
         </aside>
+      )}
+
+      {showTalhaoModal && talhaoGeometry && (
+        <TalhaoForm
+          propriedadeId={selectedProperty?.id || ''}
+          geometry={talhaoGeometry}
+          initialArea={talhaoGeometry.properties?.area_ha || undefined}
+          onClose={() => setShowTalhaoModal(false)}
+          onSave={() => {
+            console.log("Código do imóvel utilizado como propriedadeId:", propriedadeId);
+            setShowTalhaoModal(false);
+            setRefreshTrigger((prev) => prev + 1);
+          }}
+        />
       )}
     </div>
   );
 };
 
 export default PropertyRegistrationPage;
+

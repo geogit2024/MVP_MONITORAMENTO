@@ -1,17 +1,19 @@
-// src/components/TalhaoModal.tsx
+// src/components/Talhaoform.tsx
+
+// src/components/TalhaoForm.tsx
 
 import React, { useState, useEffect } from 'react';
-import { Feature, Polygon } from 'geojson'; // Importe Feature e Polygon
+import { Feature, Polygon } from 'geojson';
 import { Talhao } from '../interfaces/Talhao';
-import "./TalhaoForm.css";
-import * as turf from '@turf/turf'; // Para cálculo de área, se necessário
+import './TalhaoForm.css';
+import * as turf from '@turf/turf';
 
 interface TalhaoModalProps {
   onClose: () => void;
-  onSave: (talhao: Talhao) => void; // Chamado após o talhão ser salvo no backend
+  onSave: (talhao: Talhao) => void;
   propertyId: string;
-  talhaoGeometry: Feature<Polygon>; // NOVO: Geometria do talhão desenhado
-  initialArea?: number; // Opcional: Área pré-calculada do talhão
+  talhaoGeometry: Feature<Polygon>;
+  initialArea?: number;
 }
 
 const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, talhaoGeometry, initialArea }) => {
@@ -21,10 +23,15 @@ const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, 
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // Calcula a área se não foi passada ou se a geometria mudar
-    if (!initialArea && talhaoGeometry) {
-      const calculatedArea = turf.area(talhaoGeometry) / 10000; // Converte para hectares
-      setArea(parseFloat(calculatedArea.toFixed(4)));
+    if (!initialArea && talhaoGeometry && talhaoGeometry.geometry?.type === 'Polygon') {
+      try {
+        const calcArea = turf.area(talhaoGeometry);
+        const areaHa = calcArea / 10000;
+        setArea(parseFloat(areaHa.toFixed(4)));
+      } catch (err) {
+        console.error('Erro ao calcular área do talhão:', err);
+        alert('Não foi possível calcular a área do talhão.');
+      }
     } else if (initialArea) {
       setArea(initialArea);
     }
@@ -32,44 +39,41 @@ const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (nome.trim() === '' || area === '' || area <= 0) {
-      alert('Por favor, preencha o nome e a área do talhão.');
+    if (!nome || area === '' || Number(area) <= 0) {
+      alert('Por favor, preencha corretamente os campos obrigatórios.');
       return;
     }
 
     setIsLoading(true);
-    const newTalhao: Partial<Talhao> = { // Usar Partial porque o ID será do backend
-      nome: nome,
+    const novoTalhao: Partial<Talhao> = {
+      nome,
       area: Number(area),
       cultura_principal: culturaPrincipal,
-      geometry: talhaoGeometry, // ✅ Inclui a geometria no payload
+      geometry: talhaoGeometry,
     };
 
     try {
-        const response = await fetch(`http://localhost:8000/api/properties/${propertyId}/talhoes`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(newTalhao),
-        });
+      const response = await fetch(`http://localhost:8000/api/properties/${propertyId}/talhoes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(novoTalhao),
+      });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Falha ao adicionar talhão.');
-        }
+      if (!response.ok) {
+        const erro = await response.json();
+        throw new Error(erro.detail || 'Erro ao salvar o talhão.');
+      }
 
-        const savedTalhao: Talhao = await response.json(); // Backend deve retornar o talhão salvo com ID
-        onSave(savedTalhao); // Notifica o componente pai
-
-        alert('Talhão cadastrado com sucesso!');
-        // O modal será fechado pelo pai após o onSave
-
+      const talhaoSalvo: Talhao = await response.json();
+      alert('Talhão cadastrado com sucesso!');
+      onSave(talhaoSalvo);
     } catch (error: any) {
-        console.error('Erro ao cadastrar talhão:', error);
-        alert(error.message);
+      console.error(error);
+      alert(error.message || 'Erro desconhecido ao salvar.');
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -79,10 +83,10 @@ const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, 
         <h2>Cadastro de Talhão</h2>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="talhaoNome">Nome do Talhão:</label>
+            <label htmlFor="nome">Nome do Talhão:</label>
             <input
               type="text"
-              id="talhaoNome"
+              id="nome"
               value={nome}
               onChange={(e) => setNome(e.target.value)}
               required
@@ -90,22 +94,22 @@ const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, 
             />
           </div>
           <div className="form-group">
-            <label htmlFor="talhaoArea">Área (ha):</label>
+            <label htmlFor="area">Área (ha):</label>
             <input
               type="number"
-              id="talhaoArea"
+              id="area"
               value={area}
               onChange={(e) => setArea(parseFloat(e.target.value) || '')}
-              step="0.01"
               required
               disabled={isLoading}
+              step="0.01"
             />
           </div>
           <div className="form-group">
-            <label htmlFor="talhaoCultura">Cultura Principal:</label>
+            <label htmlFor="culturaPrincipal">Cultura Principal:</label>
             <input
               type="text"
-              id="talhaoCultura"
+              id="culturaPrincipal"
               value={culturaPrincipal}
               onChange={(e) => setCulturaPrincipal(e.target.value)}
               disabled={isLoading}

@@ -92,6 +92,16 @@ propriedades_rurais = Table(
     Column('doc_terra_path', String(255), nullable=True),
     Column('geom', Geometry('POLYGON', srid=4326)),
 )
+# Definição da tabela de talhões
+talhoes = Table(
+    'talhoes', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('propriedade_id', Integer, nullable=False),
+    Column('nome', String(255), nullable=False),
+    Column('area', Float, nullable=False),
+    Column('cultura_principal', String(255)),
+    Column('geometry', Geometry('POLYGON', srid=4326)),
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -211,6 +221,13 @@ class PropertyGeoJSON(BaseModel):
 class FeatureCollection(BaseModel):
     type: str = "FeatureCollection"
     features: List[PropertyGeoJSON]
+
+class TalhaoCreate(BaseModel):
+    nome: str
+    area: float
+    cultura_principal: Optional[str] = None
+    geometry: Dict[str, Any]  # GeoJSON
+
 
 # --------------------------------------------------------------------------
 # FUNÇÕES AUXILIARES E CONSTANTES DO GEE

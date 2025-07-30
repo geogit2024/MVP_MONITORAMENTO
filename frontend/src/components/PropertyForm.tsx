@@ -27,6 +27,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
   onEdit,
   onDelete, // Certifique-se de desestruturar onDelete aqui
   onSegmentationComplete,
+  onCadastrarTalhao,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
 
