@@ -14,6 +14,8 @@ interface PropertyFormProps {
   onEdit?: () => void;
   onDelete?: (propertyId: string) => void; // Certifique-se de que esta prop está definida na interface
   onSegmentationComplete?: () => void;
+  onCadastrarTalhao?: () => void; // NOVO
+
 }
 
 const PropertyForm: React.FC<PropertyFormProps> = ({
@@ -318,6 +320,22 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
             Cancelar
           </button>
         )}
+{!isReadOnly && (
+  <button
+    type="button"
+    onClick={() => {
+      if (onCadastrarTalhao) {
+        onCadastrarTalhao(); // callback para ação de cadastro de talhão
+      } else {
+        alert("Funcionalidade de cadastro de talhão ainda não implementada.");
+      }
+    }}
+    className="button-secondary"
+    disabled={isLoading}
+  >
+    Cadastrar Talhão
+  </button>
+)}
 
         <button
           type={!isReadOnly ? 'submit' : 'button'}

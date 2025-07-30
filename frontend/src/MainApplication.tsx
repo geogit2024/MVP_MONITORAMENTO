@@ -377,7 +377,7 @@ const handleSubmitProperty = useCallback(() => {
                 {notification && <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />}
                 <div className="module-navigation">
                     <button className={activeModule === 'territorial' ? 'active' : ''} onClick={() => setActiveModule('territorial')}>Monitoramento Territorial</button>
-                    <button className={activeModule === 'clima' ? 'active' : ''} onClick={() => setActiveModule('clima')}>Monitoramento do Clima</button>
+                    
                 </div>
                 <div className="main-view">
                     {activeModule === 'territorial' ? (

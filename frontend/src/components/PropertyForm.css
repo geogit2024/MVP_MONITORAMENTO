@@ -87,6 +87,15 @@
   cursor: not-allowed;
   color: #a0a0a0;
 }
+.button-talhao {
+  background-color: #457b9d; /* Azul */
+  color: white;
+  border: none;
+}
+
+.button-talhao:hover {
+  background-color: #35627a;
+}
 
 
 .form-body fieldset { border: 1px solid #e0e0e0; border-radius: 6px; padding: 1.5rem; margin-bottom: 2rem; }
