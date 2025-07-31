@@ -121,6 +121,19 @@ async def startup_event():
 # --------------------------------------------------------------------------
 # MODELOS PYDANTIC (Estrutura de Dados da API)
 # --------------------------------------------------------------------------
+class TalhaoCreate(BaseModel):
+    nome: str
+    area: float
+    cultura_principal: Optional[str] = None
+    geometry: Dict[str, Any]  # GeoJSON
+
+class TalhaoDetails(BaseModel):
+    id: int
+    propriedade_id: int
+    nome: str
+    area: float
+    cultura_principal: Optional[str] = None
+    geometry: Dict[str, Any]
 
 class SearchRequest(BaseModel):
     dateFrom: date
@@ -520,7 +533,59 @@ async def get_all_properties():
     except Exception as e:
         print(f"❌ Erro ao buscar propriedades: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao buscar propriedades.")
+@app.post("/api/properties/{property_id}/talhoes", status_code=status.HTTP_201_CREATED, response_model=TalhaoDetails, tags=["Talhões"])
+async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate):
+    """
+    Cria um novo talhão associado a uma propriedade existente.
+    """
+    # Passo 1: Verificar se a propriedade pai existe
+    try:
+        check_property_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
+        with engine.connect() as connection:
+            existing_id = connection.execute(check_property_query).scalar_one_or_none()
+            if existing_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, 
+                    detail=f"A propriedade com ID {property_id} não foi encontrada."
+                )
 
+        # Passo 2: Preparar e inserir os dados do talhão
+        geom_shape = shape(talhao_data.geometry)
+        
+        insert_query = talhoes.insert().values(
+            propriedade_id=property_id,
+            nome=talhao_data.nome,
+            area=talhao_data.area,
+            cultura_principal=talhao_data.cultura_principal,
+            geometry=f'SRID=4326;{geom_shape.wkt}'
+        ).returning(talhoes) # Retorna a linha inteira inserida
+
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            result = connection.execute(insert_query).mappings().first()
+            transaction.commit()
+            
+            if not result:
+                 raise HTTPException(status_code=500, detail="Falha ao obter os dados do talhão após a inserção.")
+            
+            # Converte a geometria para GeoJSON para a resposta
+            talhao_salvo = dict(result)
+            geom_query = select(ST_AsGeoJSON(talhoes.c.geometry).label('geometry_geojson')).where(talhoes.c.id == talhao_salvo['id'])
+            with engine.connect() as conn_geom:
+                 geom_geojson_str = conn_geom.execute(geom_query).scalar_one()
+                 talhao_salvo['geometry'] = json.loads(geom_geojson_str)
+
+            return TalhaoDetails(**talhao_salvo)
+
+    except HTTPException as he:
+        raise he # Re-levanta exceções HTTP já tratadas
+    except Exception as e:
+        print(f"❌ Erro ao salvar o talhão: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Ocorreu um erro interno ao salvar o talhão: {e}"
+        )
+    
 @app.get("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
 async def get_property_by_id(property_id: int):
     """

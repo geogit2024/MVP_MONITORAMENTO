@@ -1,7 +1,3 @@
-// src/components/Talhaoform.tsx
-
-// src/components/TalhaoForm.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Feature, Polygon } from 'geojson';
 import { Talhao } from '../interfaces/Talhao';
@@ -11,12 +7,15 @@ import * as turf from '@turf/turf';
 interface TalhaoModalProps {
   onClose: () => void;
   onSave: (talhao: Talhao) => void;
-  propertyId: string;
+  propertyId: number | undefined;
   talhaoGeometry: Feature<Polygon>;
   initialArea?: number;
 }
 
 const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, talhaoGeometry, initialArea }) => {
+  // Log de DEBUG para observar a prop recebida
+  console.log('%c[FILHO] Componente TalhaoForm recebeu a prop propertyId:', 'color: green; font-weight: bold;', propertyId);
+
   const [nome, setNome] = useState('');
   const [area, setArea] = useState<number | ''>(initialArea || '');
   const [culturaPrincipal, setCulturaPrincipal] = useState('');
@@ -39,17 +38,25 @@ const TalhaoModal: React.FC<TalhaoModalProps> = ({ onClose, onSave, propertyId, 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // A guarda de segurança que nos alerta sobre o problema
+    if (typeof propertyId !== 'number' || propertyId <= 0) {
+      alert('Erro: ID da Propriedade inválido. Não é possível salvar.');
+      console.error("ID da Propriedade inválido detectado no TalhaoForm:", propertyId);
+      return; 
+    }
+
     if (!nome || area === '' || Number(area) <= 0) {
       alert('Por favor, preencha corretamente os campos obrigatórios.');
       return;
     }
 
     setIsLoading(true);
-    const novoTalhao: Partial<Talhao> = {
+    const novoTalhao = {
       nome,
       area: Number(area),
       cultura_principal: culturaPrincipal,
-      geometry: talhaoGeometry,
+      geometry: talhaoGeometry.geometry,
     };
 
     try {
