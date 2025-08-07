@@ -158,7 +158,6 @@ class IndicesRequest(BaseModel):
     polygon: Dict[str, Any]
     indices: List[str]
 
-# ALTERAÇÃO: Adicionado campo 'classification' para receber dados de quantificação
 class IndexResult(BaseModel):
     indexName: str
     imageUrl: str
@@ -235,12 +234,6 @@ class FeatureCollection(BaseModel):
     type: str = "FeatureCollection"
     features: List[PropertyGeoJSON]
 
-class TalhaoCreate(BaseModel):
-    nome: str
-    area: float
-    cultura_principal: Optional[str] = None
-    geometry: Dict[str, Any]  # GeoJSON
-
 
 # --------------------------------------------------------------------------
 # FUNÇÕES AUXILIARES E CONSTANTES DO GEE
@@ -304,26 +297,14 @@ def calculate_indices_gee(image: ee.Image, is_landsat: bool, indices_to_calculat
         add_index('RTVIcore', '100 * (NIR - RE1) - 10 * (NIR - GREEN)', bands)
     return calculated
 
-# NOVA FUNÇÃO: Adicionada a função de classificação e quantificação do NDVI
-# Substitua a sua função antiga por esta versão no seu arquivo main.py
-
-# Substitua a função inteira no seu arquivo main.py
-
 async def classify_and_quantify_ndvi_all(
     original_image: ee.Image, 
-    ndvi_image: ee.Image, # Embora o nome seja ndvi_image, ele não será usado para classificação de solo/veg
+    ndvi_image: ee.Image,
     geometry: ee.Geometry, 
     pixel_area: float, 
     scale: int, 
     is_landsat: bool
 ) -> Dict[str, float]:
-    """
-    Classifica a cobertura do solo com a melhor ferramenta para cada classe:
-    - NDWI para Água
-    - SAVI para Solo vs. Vegetação
-    Retorna a área de cada classe em hectares.
-    """
-    # PASSO 1: Calcular NDWI para Água (método atual e correto)
     scaled_image = get_image_bands(original_image, is_landsat)
     green_band = 'SR_B3' if is_landsat else 'B3'
     nir_band = 'SR_B5' if is_landsat else 'B8'
@@ -333,9 +314,6 @@ async def classify_and_quantify_ndvi_all(
     water_mask = ndwi_image.gt(0)
     land_mask = water_mask.Not()
 
-    # --- ALTERAÇÃO PRINCIPAL: Usar SAVI em vez de NDVI ---
-    # PASSO 2: Calcular SAVI para diferenciar Solo de Vegetação
-    # SAVI = ((NIR - Red) / (NIR + Red + L)) * (1 + L), com L=0.5
     savi_image = scaled_image.expression(
         '((NIR - RED) / (NIR + RED + L)) * (1 + L)', {
             'NIR': scaled_image.select(nir_band),
@@ -344,19 +322,13 @@ async def classify_and_quantify_ndvi_all(
         }
     ).rename('SAVI')
 
-    # PASSO 3: Aplicar a máscara de terra e classificar com base no SAVI
     savi_land_only = savi_image.updateMask(land_mask)
 
-    # Novos limiares baseados em SAVI, que é mais eficaz para separar solo
-    # Aumentamos o limiar para solo, pois SAVI para solo é geralmente mais baixo que o NDVI
     solo_mask = savi_land_only.lt(0.25)
     veg_rala_mask = savi_land_only.gte(0.25).And(savi_land_only.lt(0.5))
     veg_densa_mask = savi_land_only.gte(0.5)
-    # --- FIM DA ALTERAÇÃO PRINCIPAL ---
 
-    # PASSO 4: Calcular a área de cada classe (lógica inalterada)
     async def async_sum_mask(mask: ee.Image) -> float:
-        """Função auxiliar para executar a redução de forma assíncrona."""
         def blocking_reduce():
             result = mask.rename('classification').reduceRegion(
                 reducer=ee.Reducer.sum(),
@@ -387,6 +359,106 @@ async def classify_and_quantify_ndvi_all(
         "area_vegetacao_densa": area_vegetacao_densa
     }
 
+async def classify_and_quantify_savi(
+    savi_image: ee.Image, 
+    geometry: ee.Geometry, 
+    pixel_area: float, 
+    scale: int
+) -> Dict[str, float]:
+    agua_solo_mask = savi_image.lt(0)
+    veg_esparsa_mask = savi_image.gte(0).And(savi_image.lt(0.2))
+    veg_moderada_mask = savi_image.gte(0.2).And(savi_image.lt(0.5))
+    veg_densa_mask = savi_image.gte(0.5)
+
+    async def async_sum_mask(mask: ee.Image) -> float:
+        def blocking_reduce():
+            result = mask.rename('classification').reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=geometry,
+                scale=scale,
+                maxPixels=1e10
+            ).getInfo()
+            return result.get('classification', 0)
+        
+        return await asyncio.to_thread(blocking_reduce)
+
+    counts = await asyncio.gather(
+        async_sum_mask(agua_solo_mask),
+        async_sum_mask(veg_esparsa_mask),
+        async_sum_mask(veg_moderada_mask),
+        async_sum_mask(veg_densa_mask)
+    )
+
+    return {
+        "area_agua_solo": (counts[0] * pixel_area) / 10000,
+        "area_vegetacao_esparsa": (counts[1] * pixel_area) / 10000,
+        "area_vegetacao_moderada": (counts[2] * pixel_area) / 10000,
+        "area_vegetacao_densa": (counts[3] * pixel_area) / 10000,
+    }
+
+async def classify_and_quantify_msavi(
+    msavi_image: ee.Image, 
+    geometry: ee.Geometry, 
+    pixel_area: float, 
+    scale: int
+) -> Dict[str, float]:
+    solo_mask = msavi_image.lt(0.2)
+    veg_rala_mask = msavi_image.gte(0.2).And(msavi_image.lt(0.4))
+    veg_moderada_mask = msavi_image.gte(0.4).And(msavi_image.lt(0.6))
+    veg_densa_mask = msavi_image.gte(0.6)
+
+    async def async_sum_mask(mask: ee.Image) -> float:
+        def blocking_reduce():
+            result = mask.rename('classification').reduceRegion(reducer=ee.Reducer.sum(), geometry=geometry, scale=scale, maxPixels=1e10).getInfo()
+            return result.get('classification', 0)
+        return await asyncio.to_thread(blocking_reduce)
+
+    counts = await asyncio.gather(
+        async_sum_mask(solo_mask),
+        async_sum_mask(veg_rala_mask),
+        async_sum_mask(veg_moderada_mask),
+        async_sum_mask(veg_densa_mask)
+    )
+
+    return {
+        "area_solo_exposto": (counts[0] * pixel_area) / 10000,
+        "area_vegetacao_rala": (counts[1] * pixel_area) / 10000,
+        "area_vegetacao_moderada": (counts[2] * pixel_area) / 10000,
+        "area_vegetacao_densa": (counts[3] * pixel_area) / 10000,
+    }
+
+async def classify_and_quantify_ndre(
+    ndre_image: ee.Image, 
+    geometry: ee.Geometry, 
+    pixel_area: float, 
+    scale: int
+) -> Dict[str, float]:
+    nao_vegetado_mask = ndre_image.lt(0.2)
+    veg_estressada_mask = ndre_image.gte(0.2).And(ndre_image.lt(0.35))
+    veg_moderada_mask = ndre_image.gte(0.35).And(ndre_image.lt(0.5))
+    veg_densa_mask = ndre_image.gte(0.5)
+
+    async def async_sum_mask(mask: ee.Image) -> float:
+        def blocking_reduce():
+            result = mask.rename('classification').reduceRegion(reducer=ee.Reducer.sum(), geometry=geometry, scale=scale, maxPixels=1e10).getInfo()
+            return result.get('classification', 0)
+        return await asyncio.to_thread(blocking_reduce)
+
+    counts = await asyncio.gather(
+        async_sum_mask(nao_vegetado_mask),
+        async_sum_mask(veg_estressada_mask),
+        async_sum_mask(veg_moderada_mask),
+        async_sum_mask(veg_densa_mask)
+    )
+
+    return {
+        "area_nao_vegetada": (counts[0] * pixel_area) / 10000,
+        "area_vegetacao_estressada": (counts[1] * pixel_area) / 10000,
+        "area_vegetacao_moderada": (counts[2] * pixel_area) / 10000,
+        "area_vegetacao_densa": (counts[3] * pixel_area) / 10000,
+    }
+
+
 # --------------------------------------------------------------------------
 # ENDPOINTS DA API
 # --------------------------------------------------------------------------
@@ -396,7 +468,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.post("/api/properties", status_code=status.HTTP_201_CREATED, response_model=PropertyDetails, tags=["Properties"])
 async def create_property(property_data: PropertyCreate):
-    """Recebe os dados da propriedade (JSON) e a persiste no banco de dados."""
     try:
         geom_shape = shape(property_data.geometry)
         
@@ -435,7 +506,6 @@ async def create_property(property_data: PropertyCreate):
 
 @app.put("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
 async def update_property(property_id: int, property_update_data: PropertyCreate):
-    """Atualiza os dados de uma propriedade rural existente pelo seu ID."""
     try:
         existing_property_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
         with engine.connect() as connection:
@@ -481,7 +551,6 @@ async def update_property(property_id: int, property_update_data: PropertyCreate
 
 @app.delete("/api/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Properties"])
 async def delete_property(property_id: int):
-    """Exclui uma propriedade rural existente pelo seu ID."""
     try:
         check_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
         with engine.connect() as connection:
@@ -504,7 +573,6 @@ async def delete_property(property_id: int):
 
 @app.get("/api/properties", response_model=FeatureCollection, tags=["Properties"])
 async def get_all_properties():
-    """Retorna todas as propriedades cadastradas como um GeoJSON FeatureCollection."""
     query = select(
         propriedades_rurais.c.id,
         propriedades_rurais.c.propriedade_nome,
@@ -533,12 +601,9 @@ async def get_all_properties():
     except Exception as e:
         print(f"❌ Erro ao buscar propriedades: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro ao buscar propriedades.")
+
 @app.post("/api/properties/{property_id}/talhoes", status_code=status.HTTP_201_CREATED, response_model=TalhaoDetails, tags=["Talhões"])
 async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate):
-    """
-    Cria um novo talhão associado a uma propriedade existente.
-    """
-    # Passo 1: Verificar se a propriedade pai existe
     try:
         check_property_query = select(propriedades_rurais.c.id).where(propriedades_rurais.c.id == property_id)
         with engine.connect() as connection:
@@ -549,7 +614,6 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
                     detail=f"A propriedade com ID {property_id} não foi encontrada."
                 )
 
-        # Passo 2: Preparar e inserir os dados do talhão
         geom_shape = shape(talhao_data.geometry)
         
         insert_query = talhoes.insert().values(
@@ -558,7 +622,7 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
             area=talhao_data.area,
             cultura_principal=talhao_data.cultura_principal,
             geometry=f'SRID=4326;{geom_shape.wkt}'
-        ).returning(talhoes) # Retorna a linha inteira inserida
+        ).returning(talhoes)
 
         with engine.connect() as connection:
             transaction = connection.begin()
@@ -568,7 +632,6 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
             if not result:
                  raise HTTPException(status_code=500, detail="Falha ao obter os dados do talhão após a inserção.")
             
-            # Converte a geometria para GeoJSON para a resposta
             talhao_salvo = dict(result)
             geom_query = select(ST_AsGeoJSON(talhoes.c.geometry).label('geometry_geojson')).where(talhoes.c.id == talhao_salvo['id'])
             with engine.connect() as conn_geom:
@@ -578,7 +641,7 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
             return TalhaoDetails(**talhao_salvo)
 
     except HTTPException as he:
-        raise he # Re-levanta exceções HTTP já tratadas
+        raise he
     except Exception as e:
         print(f"❌ Erro ao salvar o talhão: {e}")
         raise HTTPException(
@@ -588,9 +651,6 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
     
 @app.get("/api/properties/{property_id}", response_model=PropertyDetails, tags=["Properties"])
 async def get_property_by_id(property_id: int):
-    """
-    Busca e retorna os detalhes completos de uma única propriedade pelo seu ID.
-    """
     query = select(
         propriedades_rurais,
         ST_AsGeoJSON(propriedades_rurais.c.geom).label('geometry_geojson')
@@ -619,7 +679,6 @@ async def get_property_by_id(property_id: int):
 # === ENDPOINTS DO GOOGLE EARTH ENGINE ===
 @app.post("/api/earth-images/search", response_model=List[ImageInfo], tags=["Google Earth Engine"])
 async def search_earth_images(request: SearchRequest):
-    """Busca imagens de satélite e retorna metadados e URL de thumbnail."""
     try:
         geometry = create_ee_geometry_from_json(request.polygon)
         collection_name = SATELLITE_COLLECTIONS.get(request.satellite)
@@ -670,7 +729,6 @@ async def search_earth_images(request: SearchRequest):
 
 @app.post("/api/earth-images/preview", tags=["Google Earth Engine"])
 async def get_image_preview_layer(request: ImagePreviewRequest):
-    """Gera uma camada de visualização em cores reais para uma imagem específica."""
     try:
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
@@ -690,14 +748,16 @@ async def get_image_preview_layer(request: ImagePreviewRequest):
 
 @app.post("/api/earth-images/indices", response_model=IndicesResponse, tags=["Google Earth Engine"])
 async def generate_indices(request: IndicesRequest):
-    """Calcula múltiplos índices e retorna URLs para visualização, download e quantificação NDVI."""
     try:
         if not request.indices:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A lista de índices não pode ser vazia.")
         
         is_landsat = "LANDSAT" in request.satellite
+        if 'Red-Edge NDVI' in request.indices and is_landsat:
+             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Red-Edge NDVI só pode ser calculado para satélites Sentinel-2.")
+
         geometry = create_ee_geometry_from_json(request.polygon)
-        image = ee.Image(request.imageId) # Imagem original com todas as bandas
+        image = ee.Image(request.imageId)
         calculated_indices = calculate_indices_gee(image, is_landsat, request.indices)
         
         results = []
@@ -707,34 +767,28 @@ async def generate_indices(request: IndicesRequest):
             clipped_index_image = index_image.clip(geometry)
             classification_data = None
             
+            scale = 10 if "SENTINEL" in request.satellite.upper() else 30
+            pixel_area = scale * scale
+            sensor_str = "Sentinel" if "SENTINEL" in request.satellite.upper() else "Landsat"
+
             if index_name.upper() == "NDVI":
-                scale = 10 if "SENTINEL" in request.satellite.upper() else 30
-                pixel_area = scale * scale
-                sensor_str = "Sentinel" if "SENTINEL" in request.satellite.upper() else "Landsat"
-                
-                # --- ALTERAÇÃO PRINCIPAL ---
-                # Chama a função de quantificação passando a imagem original (para o NDWI),
-                # a imagem de NDVI, a geometria e outros parâmetros necessários.
-                ndvi_areas = await classify_and_quantify_ndvi_all(
-                    image,                  # <-- Passa a imagem original
-                    clipped_index_image,    # <-- Passa a imagem do NDVI
-                    geometry,
-                    pixel_area=pixel_area,
-                    scale=scale,
-                    is_landsat=is_landsat   # <-- Passa a informação do sensor
-                )
-                
-                ndvi_areas.update({
-                    "pixel_area_m2": pixel_area,
-                    "scale_m": scale,
-                    "sensor": sensor_str,
-                })
-                classification_data = ndvi_areas
+                classification_data = await classify_and_quantify_ndvi_all(image, clipped_index_image, geometry, pixel_area, scale, is_landsat)
+                classification_data.update({"pixel_area_m2": pixel_area, "scale_m": scale, "sensor": sensor_str})
             
+            elif index_name.upper() == "SAVI":
+                classification_data = await classify_and_quantify_savi(clipped_index_image, geometry, pixel_area, scale)
+                classification_data.update({"sensor": sensor_str, "scale": scale})
+
+            elif index_name.upper() == "MSAVI":
+                classification_data = await classify_and_quantify_msavi(clipped_index_image, geometry, pixel_area, scale)
+                classification_data.update({"sensor": sensor_str, "scale": scale})
+
+            elif index_name.upper() == "RED-EDGE NDVI":
+                classification_data = await classify_and_quantify_ndre(clipped_index_image, geometry, pixel_area, scale)
+                classification_data.update({"sensor": sensor_str, "scale": scale})
+
             map_id_task = asyncio.to_thread(clipped_index_image.getMapId, vis_params_index)
-            download_url_task = asyncio.to_thread(clipped_index_image.getDownloadURL, {
-                'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'
-            })
+            download_url_task = asyncio.to_thread(clipped_index_image.getDownloadURL, {'scale': 30, 'crs': 'EPSG:4326', 'region': geometry.bounds(), 'format': 'GEO_TIFF'})
             
             map_id, download_url = await asyncio.gather(map_id_task, download_url_task)
 
@@ -752,7 +806,6 @@ async def generate_indices(request: IndicesRequest):
             bounds_coords = bounds_info['coordinates'][0] 
             bounds_for_response = [[coord[1], coord[0]] for coord in bounds_coords]
         else:
-            print("Aviso: Geometria de limites não contém coordenadas válidas. Retornando limites padrão.")
             bounds_for_response = [[-90.0, -180.0], [90.0, 180.0]]
 
         return IndicesResponse(bounds=bounds_for_response, results=results)
@@ -766,28 +819,19 @@ async def generate_indices(request: IndicesRequest):
         print(f"❌ Erro inesperado ao gerar índices: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
-# Substitua a função original em seu main.py por esta
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 async def detect_changes(request: ChangeDetectionRequest):
-    """
-    Detecta mudanças, aplica filtros, suaviza os polígonos, RECORTA pelos limites da AOI,
-    calcula as áreas e retorna os resultados.
-    """
     try:
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
-        geometry = create_ee_geometry_from_json(request.polygon) # Esta é a nossa AOI
+        geometry = create_ee_geometry_from_json(request.polygon)
         is_landsat = "LANDSAT" in request.satellite
 
         before_ndvi = calculate_indices_gee(before_image, is_landsat, ['NDVI'])['NDVI']
         after_ndvi = calculate_indices_gee(after_image, is_landsat, ['NDVI'])['NDVI']
 
-        # --- NOVA ETAPA: MÁSCARA DE VEGETAÇÃO INICIAL ---
-        # Define um limiar mínimo de NDVI para considerar uma área como "vegetada"
-        # na imagem "antes". Pixels abaixo disso serão ignorados.
         VEGETATION_THRESHOLD = 0.3
         vegetation_mask = before_ndvi.gte(VEGETATION_THRESHOLD)
-        # Aplica a máscara em ambas as imagens de NDVI
         before_ndvi = before_ndvi.updateMask(vegetation_mask)
         after_ndvi = after_ndvi.updateMask(vegetation_mask)
         ndvi_difference = after_ndvi.subtract(before_ndvi)
@@ -807,31 +851,21 @@ async def detect_changes(request: ChangeDetectionRequest):
             eightConnected=False, labelProperty='change_type', maxPixels=1e10
         )
 
-        # Parâmetros para as operações, podem ser ajustados
         SMOOTHING_RADIUS = 20
         ERROR_TOLERANCE = 20
 
-        # --- FUNÇÃO ATUALIZADA ---
-        # Agora ela suaviza E recorta o resultado pela AOI
         def smooth_and_clip_feature(feature):
-            # 1. Realiza a suavização combinando buffer e simplificação
             smoothed_geometry = feature.geometry() \
                                    .buffer(SMOOTHING_RADIUS, maxError=1) \
                                    .buffer(-SMOOTHING_RADIUS, maxError=1) \
                                    .simplify(maxError=ERROR_TOLERANCE)
             
-            # 2. --- NOVA ETAPA CRÍTICA ---
-            # Recorta (clip) a geometria suavizada com os limites da AOI original.
-            # Isso garante que o polígono não "vaze" para fora.
             clipped_geometry = smoothed_geometry.intersection(geometry, maxError=1)
             
-            # 3. Retorna o feature com sua geometria atualizada (agora suave e recortada)
             return feature.setGeometry(clipped_geometry)
 
-        # Aplica a função de suavizar E RECORTAR a cada polígono detectado
         final_vectors = change_vectors.map(smooth_and_clip_feature)
         
-        # O resto do código agora usa 'final_vectors'
         gain_polygons = final_vectors.filter(ee.Filter.eq('change_type', 2))
         loss_polygons = final_vectors.filter(ee.Filter.eq('change_type', 1))
 
@@ -870,7 +904,6 @@ async def detect_changes(request: ChangeDetectionRequest):
     
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 async def get_download_info(request: DownloadInfoRequest):
-    """Gera e retorna uma URL de download para a imagem original (GeoTIFF) recortada pela AOI."""
     try:
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
@@ -894,7 +927,6 @@ async def get_download_info(request: DownloadInfoRequest):
 
 @app.get("/api/earth-images/precipitation-tiles", tags=["Google Earth Engine"])
 async def get_precipitation_tile():
-    """Retorna uma camada de precipitação média para um período fixo."""
     try:
         today = ee.Date(date.today())
         start_of_month = today.update(day=1)

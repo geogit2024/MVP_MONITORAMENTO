@@ -1,5 +1,3 @@
-// src/MainApplication.tsx
-
 import React, { useState, useCallback, useEffect } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
@@ -9,13 +7,16 @@ import SidebarClima from './components/SidebarClima';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
 import NdviResultPanel from './components/NdviResultPanel';
+import SaviResultPanel from './components/SaviResultPanel';
+import MsaviResultPanel from './components/MsaviResultPanel';
+import NdreResultPanel from './components/NdreResultPanel';
 import ChangeDetectionPanel from './components/ChangeDetectionPanel';
-
-import { MapStateProvider } from './context/MapStateContext'; 
+import { MapStateProvider } from './context/MapStateContext';
 
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
+
 
 // --- DEFINIÇÃO DE TIPOS E INTERFACES ---
 export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
@@ -30,17 +31,44 @@ export interface NdviAreas {
   sensor: string;
 }
 
+export interface SaviAreas {
+  area_agua_solo: number;
+  area_vegetacao_esparsa: number;
+  area_vegetacao_moderada: number;
+  area_vegetacao_densa: number;
+  sensor: string;
+  scale: number;
+}
+
+export interface MsaviAreas {
+  area_solo_exposto: number;
+  area_vegetacao_rala: number;
+  area_vegetacao_moderada: number;
+  area_vegetacao_densa: number;
+  sensor: string;
+  scale: number;
+}
+
+export interface NdreAreas {
+  area_nao_vegetada: number;
+  area_vegetacao_estressada: number;
+  area_vegetacao_moderada: number;
+  area_vegetacao_densa: number;
+  sensor: string;
+  scale: number;
+}
+
 export interface IndexResult {
     indexName: string;
     imageUrl: string;
     downloadUrl: string;
-    classification?: NdviAreas;
+    classification?: NdviAreas | SaviAreas | MsaviAreas | NdreAreas;
 }
+
 
 interface NotificationProps { message: string; type: 'error' | 'success'; onDismiss: () => void; }
 interface LoadingIndicatorProps { text: string; subtext: string; }
 
-// --- CONSTANTES GLOBAIS ---
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const SATELLITES = ['LANDSAT_8', 'LANDSAT_9', 'SENTINEL_2A', 'SENTINEL_2B'];
 const CHANGE_LAYER_ID = 'change-detection-result';
@@ -87,6 +115,9 @@ export default function MainApplication() {
     const [isReadOnly, setIsReadOnly] = useState(true);
 
     const [ndviAreas, setNdviAreas] = useState<NdviAreas | null>(null);
+    const [saviResult, setSaviResult] = useState<SaviAreas | null>(null);
+    const [msaviResult, setMsaviResult] = useState<MsaviAreas | null>(null);
+    const [ndreResult, setNdreResult] = useState<NdreAreas | null>(null);
     const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
 
     const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number; total: number } | null>(null);
@@ -109,6 +140,9 @@ export default function MainApplication() {
         setIsChangeLayerVisible(false);
         setChangeAreas(null);
         setNdviAreas(null);
+        setSaviResult(null);
+        setMsaviResult(null);
+        setNdreResult(null);
     }, []);
 
     const setAoiAndZoom = useCallback((feature: Feature) => {
@@ -147,12 +181,27 @@ export default function MainApplication() {
     }, []);
 
     const handleCalculateIndices = useCallback(async () => {
-        if (selectedImageIds.length === 0 || !activeAoi) { showNotification("Selecione uma imagem e defina uma AOI.", "error"); return; }
-        if (selectedIndices.length === 0) { showNotification("Selecione pelo menos um índice para calcular.", "error"); return; }
+        if (selectedImageIds.length === 0 || !activeAoi) {
+            showNotification("Selecione uma imagem e defina uma AOI.", "error");
+            return;
+        }
+        if (selectedIndices.length === 0) {
+            showNotification("Selecione pelo menos um índice para calcular.", "error");
+            return;
+        }
+
+        if (selectedIndices.includes('Red-Edge NDVI') && satellite.startsWith('LANDSAT')) {
+            showNotification('Red-Edge NDVI só pode ser calculado para satélites Sentinel-2.', 'error');
+            return;
+        }
+
         setLoadingState('calculating');
-        setPreviewLayerUrl(null);
-        setDifferenceLayerUrl(null);
-        setIsChangeLayerVisible(false);
+        // Limpa painéis antigos antes de calcular novos para evitar mostrar dados de análises passadas
+        setNdviAreas(null);
+        setSaviResult(null);
+        setMsaviResult(null);
+        setNdreResult(null);
+
         try {
             const imageId = selectedImageIds[0];
             const res = await fetch(`${API_BASE_URL}/api/earth-images/indices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry, indices: selectedIndices }) });
@@ -166,23 +215,35 @@ export default function MainApplication() {
                 setMapViewTarget(data.bounds);
                 showNotification(`${data.results.length} índice(s) calculado(s)!`, "success");
 
-                const ndviResult = data.results.find(r => r.indexName.toUpperCase() === 'NDVI');
-                if (ndviResult && ndviResult.classification) {
-                    setNdviAreas(ndviResult.classification);
-                } else {
-                    setNdviAreas(null);
-                }
+                data.results.forEach(result => {
+                    switch(result.indexName.toUpperCase()) {
+                        case 'NDVI':
+                            setNdviAreas(result.classification as NdviAreas || null);
+                            break;
+                        case 'SAVI':
+                            setSaviResult(result.classification as SaviAreas || null);
+                            break;
+                        case 'MSAVI':
+                            setMsaviResult(result.classification as MsaviAreas || null);
+                            break;
+                        case 'RED-EDGE NDVI':
+                            setNdreResult(result.classification as NdreAreas || null);
+                            break;
+                        default:
+                            break;
+                    }
+                });
 
             } else {
                 throw new Error("A API não retornou resultados para os índices solicitados.");
             }
         } catch (error: any) {
             showNotification(error.message || "Erro ao calcular os índices.", "error");
-            setNdviAreas(null);
+            resetAnalysisLayers();
         } finally {
             setLoadingState('idle');
         }
-    }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification]);
+    }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification, resetAnalysisLayers]);
 
     const handlePreviewImage = useCallback(async (imageId: string) => {
         if (!activeAoi || !satellite) { showNotification("Defina uma AOI e selecione um satélite primeiro.", "error"); return; }
@@ -264,7 +325,7 @@ export default function MainApplication() {
             setLoadingState('idle');
         }
     }, [selectedImageIds, activeAoi, showNotification]);
- 
+
     const handleAoiFileUpload = useCallback(async (file: File | null) => {
         if (!file) return;
         setLoadingState('searching'); 
@@ -341,9 +402,10 @@ const handleSubmitProperty = useCallback(() => {
     setSelectedProperty(null);
 }, []);
 
-    const handleCloseNdviModal = useCallback(() => {
-        setNdviAreas(null);
-    }, []);
+    const handleCloseNdviModal = useCallback(() => { setNdviAreas(null); }, []);
+    const handleCloseSaviModal = useCallback(() => { setSaviResult(null); }, []);
+    const handleCloseMsaviModal = useCallback(() => { setMsaviResult(null); }, []);
+    const handleCloseNdreModal = useCallback(() => { setNdreResult(null); }, []);
 
     useEffect(() => {
         if (notification) { const timer = setTimeout(() => setNotification(null), 4000); return () => clearTimeout(timer); }
@@ -377,13 +439,19 @@ const handleSubmitProperty = useCallback(() => {
                 {notification && <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />}
                 <div className="module-navigation">
                     <button className={activeModule === 'territorial' ? 'active' : ''} onClick={() => setActiveModule('territorial')}>Monitoramento Territorial</button>
-                    
                 </div>
                 <div className="main-view">
                     {activeModule === 'territorial' ? (
                         <SidebarTerritorial
                             dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
-                            cloudPct={cloudPct} onCloudPctChange={setCloudPct} satellite={satellite} onSatelliteChange={setSatellite}
+                            cloudPct={cloudPct} onCloudPctChange={setCloudPct}
+                            satellite={satellite}
+                            onSatelliteChange={(value) => {
+                                setSatellite(value);
+                                if (value.startsWith('LANDSAT') && selectedIndices.includes('Red-Edge NDVI')) {
+                                    setSelectedIndices(prev => prev.filter(i => i !== 'Red-Edge NDVI'));
+                                }
+                            }}
                             satellites={SATELLITES} theme={theme} loadingState={loadingState}
                             selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
                             onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
@@ -391,7 +459,6 @@ const handleSubmitProperty = useCallback(() => {
                             onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
                             calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
                             changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
-                            activeAoi={activeAoi}
                         />
                     ) : (
                         <SidebarClima theme={theme} onToggleTheme={handleToggleTheme}/>
@@ -426,14 +493,13 @@ const handleSubmitProperty = useCallback(() => {
                     </main>
                 </div>
                 
-                {/* ALTERAÇÃO: Passa a propriedade 'initialPosition' para cada painel */}
                 {changeAreas && (
                     <ChangeDetectionPanel
                         gainArea={changeAreas.gain}
                         lossArea={changeAreas.loss}
                         totalArea={changeAreas.total}
                         onClose={() => setChangeAreas(null)}
-                        initialPosition={{ x: 570, y: 70 }}
+                        initialPosition={{ x: 1090, y: 70 }}
                     />
                 )}
                 
@@ -442,6 +508,30 @@ const handleSubmitProperty = useCallback(() => {
                         data={ndviAreas}
                         onClose={handleCloseNdviModal}
                         initialPosition={{ x: 50, y: 70 }}
+                    />
+                )}
+
+                {saviResult && (
+                    <SaviResultPanel
+                      data={saviResult}
+                      onClose={handleCloseSaviModal}
+                      initialPosition={{ x: 570, y: 70 }}
+                    />
+                )}
+                
+                {msaviResult && (
+                    <MsaviResultPanel
+                      data={msaviResult}
+                      onClose={handleCloseMsaviModal}
+                      initialPosition={{ x: 1090, y: 70 }}
+                    />
+                )}
+
+                {ndreResult && (
+                    <NdreResultPanel
+                      data={ndreResult}
+                      onClose={handleCloseNdreModal}
+                      initialPosition={{ x: 50, y: 120 }}
                     />
                 )}
             </div>

@@ -1,0 +1,46 @@
+/* src/components/IndicesInfoPanel.css */
+
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  color: #333;
+}
+
+.info-table th,
+.info-table td {
+  border: 1px solid #ddd;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.info-table th {
+  background-color: #f2f2f2;
+  font-weight: bold;
+  position: sticky;
+  top: 0;
+}
+
+.info-table tbody tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.info-table tbody tr:hover {
+  background-color: #f1f1f1;
+}
+
+.info-table td:first-child {
+  font-weight: 500;
+  width: 15%;
+}
+
+.info-table td:nth-child(2) {
+    width: 40%;
+}
+
+/* Garante que o conteúdo do painel tenha scroll se necessário */
+.panel-body-scrollable {
+    overflow-y: auto;
+    height: calc(100% - 40px); /* Altura total menos a altura do cabeçalho */
+}
