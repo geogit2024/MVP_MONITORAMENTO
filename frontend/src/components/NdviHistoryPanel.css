@@ -1,0 +1,38 @@
+/* src/components/NdviHistoryPanel.css */
+.history-panel {
+  width: 380px;
+  height: auto;
+}
+
+.panel-description {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.history-panel .form-group {
+  margin-bottom: 15px;
+}
+
+.history-panel .form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.history-panel .form-group input,
+.history-panel .form-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box; /* Garante que o padding não aumente a largura */
+}
+
+.panel-actions {
+  margin-top: 25px;
+  display: flex;
+  justify-content: flex-end;
+}

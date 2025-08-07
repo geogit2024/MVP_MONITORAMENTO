@@ -1,0 +1,83 @@
+/* Fundo escurecido que cobre toda a tela */
+.info-panel-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000; /* Garante que o painel fique sobre todos os outros elementos */
+}
+
+/* O contêiner principal do painel flutuante */
+.info-panel-container {
+  background-color: white;
+  color: #333;
+  border-radius: 8px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  width: 90%;
+  max-width: 900px; /* Largura máxima para telas grandes */
+  max-height: 80vh; /* Altura máxima para não ocupar a tela inteira */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Cabeçalho do painel */
+.info-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+.info-panel-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+/* Botão de fechar (o 'X') */
+.info-panel-close-button {
+  border: none;
+  background: transparent;
+  font-size: 2rem;
+  font-weight: bold;
+  cursor: pointer;
+  color: #888;
+}
+
+.info-panel-close-button:hover {
+  color: #000;
+}
+
+/* Conteúdo do painel (onde a tabela fica) */
+.info-panel-content {
+  padding: 1.5rem;
+  overflow-y: auto; /* Adiciona uma barra de rolagem se o conteúdo for muito grande */
+}
+
+/* Estilização da tabela para melhor legibilidade */
+.info-panel-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.info-panel-content th,
+.info-panel-content td {
+  border: 1px solid #ddd;
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.info-panel-content th {
+  background-color: #f7f7f7;
+  font-weight: bold;
+}
+
+.info-panel-content tbody tr:nth-child(even) {
+  background-color: #fdfdfd;
+}

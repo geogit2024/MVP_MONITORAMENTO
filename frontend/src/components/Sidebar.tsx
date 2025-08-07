@@ -1,15 +1,19 @@
 // src/components/Sidebar.tsx
 
-import React, { useState } from 'react'; // 1. Importar o useState
+// Importações originais e novas adições
+import React, { useState } from 'react';
 import { IndexResult } from '../MainApplication';
-import IndicesInfoPanel from './IndicesInfoPanel'; // 2. Importar o novo painel de informações
+import IndicesInfoPanel from './IndicesInfoPanel';
+import SatelliteInfoPanel from './SatelliteInfoPanel'; // Adicionado
 import './Sidebar.css';
 
+// Constante original
 const availableIndices = [
   'NDVI', 'SAVI', 'MSAVI', 'SR', 'Green NDVI', 'Red-Edge NDVI',
   'VARI', 'TSAVI', 'PVI', 'MTVI2', 'RTVIcore', 'CI Red-Edge', 'CI Green'
 ];
 
+// Interface original
 interface SidebarProps {
   dateFrom: string; onDateFromChange: (v: string) => void;
   dateTo: string; onDateToChange: (v: string) => void;
@@ -33,6 +37,7 @@ interface SidebarProps {
   onChangeThreshold: (value: number) => void;
 }
 
+// Componente principal, mantendo todos os props originais
 export default function SidebarTerritorial({
   dateFrom, onDateFromChange, dateTo, onDateToChange, cloudPct, onCloudPctChange,
   satellite, onSatelliteChange, satellites, theme, loadingState, selectedImageIds,
@@ -42,16 +47,19 @@ export default function SidebarTerritorial({
   changeThreshold, onChangeThreshold
 }: SidebarProps) {
   
-  // 3. Adicionar estado para controlar a visibilidade do painel de informação
+  // Estado original
   const [isInfoPanelVisible, setInfoPanelVisible] = useState(false);
+  // Novo estado adicionado
+  const [isSatelliteInfoVisible, setSatelliteInfoVisible] = useState(false);
 
+  // Lógica original do componente
   const selectionCount = selectedImageIds.length;
   const isProcessing = loadingState !== 'idle';
   const canDetectChange = !isProcessing && selectedImageIds.length === 2;
   const isLandsat = satellite.startsWith('LANDSAT');
 
   return (
-    // Usar um Fragment <> para poder retornar a sidebar e o painel como irmãos
+    // Estrutura JSX original, usando Fragment <>
     <>
       <aside className="sidebar-container">
         <div className="sidebar-header">
@@ -71,12 +79,23 @@ export default function SidebarTerritorial({
             <label>Data Inicial: <input type="date" value={dateFrom} onChange={e => onDateFromChange(e.target.value)} /></label>
             <label>Data Final: <input type="date" value={dateTo} onChange={e => onDateToChange(e.target.value)} /></label>
             <label>% Nuvens Máx: <input type="number" min={0} max={100} value={cloudPct} onChange={e => onCloudPctChange(+e.target.value)} /></label>
-            <label>Satélite:
+            
+            {/* Seção modificada para adicionar o ícone */}
+            <label>Satélite:</label>
+            <div className="input-with-icon">
               <select value={satellite} onChange={e => onSatelliteChange(e.target.value)}>
                 <option value="">-- selecione --</option>
                 {satellites.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </label>
+              <button 
+                className="info-icon-button" 
+                title="Comparar Satélites"
+                onClick={() => setSatelliteInfoVisible(true)}
+              >
+                &#8505;
+              </button>
+            </div>
+
           </fieldset>
           <hr className="sidebar-divider"/>
           <fieldset disabled={isProcessing} className="filter-group">
@@ -89,7 +108,6 @@ export default function SidebarTerritorial({
               </div>
               <hr className="sidebar-divider-inner"/>
               
-              {/* 4. Agrupar o botão e o novo ícone de informação */}
               <div className="button-with-icon-group">
                 <button 
                   onClick={onCalculateIndices} 
@@ -103,7 +121,7 @@ export default function SidebarTerritorial({
                   title="Sobre os Índices"
                   onClick={() => setInfoPanelVisible(true)}
                 >
-                  &#8505; {/* Caractere Unicode para 'i' de informação */}
+                  &#8505;
                 </button>
               </div>
 
@@ -111,7 +129,6 @@ export default function SidebarTerritorial({
                 <div className="form-group" style={{marginTop: '10px'}}>
                   <label>Visualizar Índice Calculado:</label>
                   <select onChange={(e) => onVisibleIndexChange(e.target.value)} className="form-control">
-                    {/* Adiciona uma opção padrão para desativar a visualização */}
                     <option value="">Nenhum</option> 
                     {calculatedIndices.map(index => (<option key={index.indexName} value={index.imageUrl}>{index.indexName}</option>))}
                   </select>
@@ -119,7 +136,6 @@ export default function SidebarTerritorial({
               )}
               <div className="indices-checkbox-group">
                 {availableIndices.map(indexName => {
-                  // Desabilitar Red-Edge NDVI se o satélite for Landsat
                   const isDisabled = isProcessing || (indexName.includes('Red-Edge') && isLandsat);
                   return (
                     <label key={indexName} className={`checkbox-label ${isDisabled ? 'disabled' : ''}`}>
@@ -140,48 +156,14 @@ export default function SidebarTerritorial({
         </div>
       </aside>
 
-      {/* 5. Renderizar o painel condicionalmente fora da sidebar */}
+      {/* Renderização condicional original e a nova adição */}
+      {isSatelliteInfoVisible && (
+        <SatelliteInfoPanel onClose={() => setSatelliteInfoVisible(false)} />
+      )}
+      
       {isInfoPanelVisible && (
         <IndicesInfoPanel onClose={() => setInfoPanelVisible(false)} />
       )}
     </>
   );
 }
-
-/**
- * ADICIONE O CSS ABAIXO AO SEU FICHEIRO 'Sidebar.css' ou 'App.css'
- * para estilizar o novo botão de informação.
- * * .button-with-icon-group {
- * display: flex;
- * align-items: center;
- * gap: 8px;
- * width: 100%;
- * }
- * * .button-with-icon-group .button-primary {
- * flex-grow: 1;
- * }
- * * .info-icon-button {
- * border: 1px solid #ccc;
- * background-color: #f0f0f0;
- * color: #333;
- * border-radius: 50%;
- * width: 32px;
- * height: 32px;
- * font-size: 18px;
- * font-weight: bold;
- * cursor: pointer;
- * display: flex;
- * align-items: center;
- * justify-content: center;
- * padding: 0;
- * flex-shrink: 0;
- * }
- * * .info-icon-button:hover {
- * background-color: #e0e0e0;
- * border-color: #999;
- * }
- * * .checkbox-label.disabled {
- * color: #888;
- * cursor: not-allowed;
- * }
-*/
