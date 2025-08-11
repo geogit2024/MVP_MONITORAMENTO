@@ -1,0 +1,22 @@
+/* --- TEMA CLARO DEFINITIVO PARA O SELETOR --- */
+
+#map-switcher {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    background-color: rgba(255, 255, 255, 0.9); /* Fundo branco translúcido */
+    color: black;                              /* << IMPORTANTE: Texto preto */
+    padding: 10px;
+    border-radius: 8px;
+    font-family: sans-serif;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+#base-map-selector {
+    background-color: white;
+    color: black;                              /* << IMPORTANTE: Texto preto */
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 5px;
+}

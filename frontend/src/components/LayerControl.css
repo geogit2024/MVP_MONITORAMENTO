@@ -1,0 +1,91 @@
+/* src/components/LayerControl.css */
+.layer-control-container {
+  background-color: white;
+  border-radius: 5px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+  font-family: 'Roboto', sans-serif;
+}
+
+.layer-control-toggle-button {
+  background-color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layer-control-toggle-button:hover {
+  background-color: #f4f4f4;
+}
+
+.layer-control-toggle-button svg {
+  width: 20px;
+  height: 20px;
+  color: #333;
+}
+
+.layer-control-panel {
+  padding: 12px;
+  min-width: 200px;
+  background-color: white;
+  border-radius: 0 0 5px 5px;
+  border-top: 1px solid #ddd;
+}
+
+.layer-control-panel h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 6px;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.layer-item:last-child {
+  margin-bottom: 0;
+}
+
+.layer-item input[type="checkbox"] {
+  margin-right: 10px;
+  cursor: pointer;
+  /* Estilo moderno para checkbox */
+  appearance: none;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  position: relative;
+  top: -1px;
+}
+
+.layer-item input[type="checkbox"]:checked {
+  background-color: #007bff;
+  border-color: #007bff;
+}
+
+.layer-item input[type="checkbox"]:checked::after {
+  content: '✔';
+  font-size: 12px;
+  color: white;
+  position: absolute;
+  left: 2px;
+  top: -1px;
+}
+
+
+.layer-item label {
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+  user-select: none;
+}
