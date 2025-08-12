@@ -1,0 +1,24 @@
+/* src/components/InfoTool.css */
+.info-tool-button {
+  background-color: white;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #333;
+}
+
+.info-tool-button:hover {
+  background-color: #f4f4f4;
+}
+
+/* Estilo para quando a ferramenta está ativa */
+.info-tool-button.active {
+  background-color: #007bff;
+  color: white;
+  border-color: #0056b3;
+}

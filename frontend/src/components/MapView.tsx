@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, useMap, GeoJSON } from 'react-leaflet';
+import InfoTool from './InfoTool'; 
+import { MapContainer, TileLayer, useMap, GeoJSON, useMapEvents } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
 import { Feature, FeatureCollection, Polygon } from 'geojson';
 import FirmsDataLayer from './FirmsDataLayer';
@@ -11,7 +12,7 @@ import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import BaseMapSelector from './BaseMapSelector';
-import LayerControl from './LayerControl'; // <-- 1. Importar o novo componente
+import LayerControl from './LayerControl';
 
 // Corrige ícones padrão
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
@@ -22,7 +23,7 @@ export const fireIcon = new L.Icon({
   iconSize: [24, 24],
   iconAnchor: [12, 12],
   popupAnchor: [0, -12],
-} );
+});
 
 const baseMaps = {
   osm: {
@@ -54,7 +55,7 @@ const baseMaps = {
 
 // --- COMPONENTES AUXILIARES ---
 
-const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null } ) => {
+const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) => {
   const map = useMap();
   useEffect(() => {
     if (target) map.flyToBounds(target, { padding: [50, 50] });
@@ -163,26 +164,29 @@ const DynamicTileLayer = ({
 
   return null;
 };
-
+const MapClickHandler = ({ onMapClick }: { onMapClick: (e: L.LeafletMouseEvent) => void }) => {
+  useMapEvents({
+    click(e) {
+      onMapClick(e);
+    },
+  });
+  return null;
+};
 // Componente reativo para camadas WMS com LOGS
 const WmsLayer = ({ url, options, visible, layerName }: { url: string; options: L.WMSOptions; visible: boolean; layerName: string }) => {
   const map = useMap();
   const layerRef = useRef<L.TileLayer.WMS | null>(null);
 
   useEffect(() => {
-    console.log(`[WMSLayer: ${layerName}] - Visibilidade mudou para: ${visible}`);
     if (visible) {
       if (!layerRef.current) {
-        console.log(`[WMSLayer: ${layerName}] - Criando nova camada WMS.`);
         layerRef.current = L.tileLayer.wms(url, options);
       }
       if (!map.hasLayer(layerRef.current)) {
-        console.log(`[WMSLayer: ${layerName}] - Adicionando camada ao mapa.`);
         layerRef.current.addTo(map);
       }
     } else {
       if (layerRef.current && map.hasLayer(layerRef.current)) {
-        console.log(`[WMSLayer: ${layerName}] - Removendo camada do mapa.`);
         map.removeLayer(layerRef.current);
       }
     }
@@ -192,7 +196,6 @@ const WmsLayer = ({ url, options, visible, layerName }: { url: string; options: 
     const layer = layerRef.current;
     return () => {
       if (layer && map.hasLayer(layer)) {
-        console.log(`[WMSLayer: ${layerName}] - Limpando camada ao desmontar componente.`);
         map.removeLayer(layer);
       }
     };
@@ -246,24 +249,78 @@ export default function MapView({
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
   const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-
-  // <-- 3. Estado para controlar a visibilidade das camadas WMS
+  const [isInfoToolActive, setIsInfoToolActive] = useState(false);
   const [visibleWmsLayers, setVisibleWmsLayers] = useState({
     propriedades_rurais: false,
     talhoes: false,
     propriedades_car_sp: false,
     alertas_desmatamento_mapbiomas: false,
+    ucs: false,
   });
 
   const handleWmsLayerToggle = (layerName: string, isVisible: boolean) => {
-    console.log(`[MapView] - Toggle recebido para '${layerName}'. Nova visibilidade: ${isVisible}`);
-    setVisibleWmsLayers(prev => {
-      const newState = { ...prev, [layerName]: isVisible };
-      console.log('[MapView] - Novo estado de camadas WMS:', newState);
-      return newState;
-    });
+    if (layerName === 'propriedades_car_sp' && !isVisible) {
+      setIsInfoToolActive(false);
+    }
+    setVisibleWmsLayers(prev => ({ ...prev, [layerName]: isVisible }));
+  };
+
+  const handleGetFeatureInfo = (e: L.LeafletMouseEvent) => {
+    if (!isInfoToolActive || !visibleWmsLayers.propriedades_car_sp || !mapRef.current) {
+      return;
+    }
+    const map = mapRef.current;
+    const point = map.latLngToContainerPoint(e.latlng);
+    const size = map.getSize();
+    const bounds = map.getBounds().toBBoxString();
+    
+    const url = 'http://localhost:8080/geoserver/imagens_satelite/wms';
+    const params = {
+      service: 'WMS',
+      version: '1.1.1',
+      request: 'GetFeatureInfo',
+      layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
+      query_layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
+      bbox: bounds,
+      feature_count: 10,
+      height: size.y,
+      width: size.x,
+      info_format: 'application/json',
+      srs: 'EPSG:4326',
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+    };
+    
+    const wmsUrl = `${url}?${new URLSearchParams(params as any)}`;
+
+    fetch(wmsUrl)
+      .then(response => response.json())
+      .then(data => {
+        if (data && data.features && data.features.length > 0) {
+          const feature = data.features[0];
+          const props = feature.properties;
+          const content = `
+            <div>
+              <h4>Informações do Imóvel</h4>
+              <p><strong>Código:</strong> ${props.cod_imovel}</p>
+              <p><strong>Município:</strong> ${props.nom_munici}</p>
+              <p><strong>Área (ha):</strong> ${parseFloat(props.num_area).toFixed(2)}</p>
+              <p><strong>Condição:</strong> ${props.des_condic}</p>
+            </div>
+          `;
+          L.popup()
+            .setLatLng(e.latlng)
+            .setContent(content)
+            .openOn(map);
+        }
+      })
+      .catch(error => {
+        console.error('Erro ao buscar GetFeatureInfo:', error);
+      })
+      .finally(() => {
+        setIsInfoToolActive(false);
+      });
   };
 
   const fetchProperties = async () => {
@@ -280,62 +337,27 @@ export default function MapView({
   useEffect(() => {
     fetchProperties();
   }, [refreshTrigger]);
-
+  
   useEffect(() => {
-    if (!mapRef.current || !isDrawingTalhao) return;
-
-    const map = mapRef.current;
-    map.pm.enableDraw('Polygon', {
-      snappable: true,
-      continueDrawing: false,
-    });
-
-    const handleCreate = (e: any) => {
-      const geojson = e.layer.toGeoJSON() as Feature<Polygon>;
-      onTalhaoDrawComplete?.(geojson);
-      map.pm.disableDraw();
-      map.off('pm:create', handleCreate);
-    };
-
-    map.on('pm:create', handleCreate);
-
-    return () => {
-      map.off('pm:create', handleCreate);
-      map.pm.disableDraw();
-    };
-  }, [isDrawingTalhao]);
-
-  const aoiStyle = { color: '#ff7800', weight: 3, opacity: 1, fill: false };
-  const propertyLayerStyle = {
-    color: '#007bff',
-    weight: 2,
-    opacity: 0.8,
-    fillColor: '#007bff',
-    fillOpacity: 0.2
-  };
-
-  const changePolygonStyle = (feature?: Feature) => {
-    const type = parseInt(String(feature?.properties?.change_type), 10);
-    if (type === 2)
-      return { fillColor: '#00ff00', color: '#006400', weight: 1.5, fillOpacity: 0.7 };
-    if (type === 1)
-      return { fillColor: '#ff0000', color: '#8b0000', weight: 1.5, fillOpacity: 0.7 };
-    return { color: '#808080', weight: 1, fillOpacity: 0.5 };
-  };
+  if (!mapRef.current) return;
+  const mapContainer = mapRef.current.getContainer();
+  if (isInfoToolActive) {
+    mapContainer.classList.add('crosshair-cursor');
+  } else {
+    mapContainer.classList.remove('crosshair-cursor');
+  }
+}, [isInfoToolActive]);
 
   const onEachProperty = (feature: Feature, layer: Layer) => {
     if (feature.properties) {
       const { nome, proprietario, id } = feature.properties;
       layer.bindPopup(
         `<b>${nome}</b>  
-Proprietário: ${proprietario}  
-<small>Clique para ver detalhes</small>`
+         Proprietário: ${proprietario}  
+         <small>Clique para ver detalhes</small>`
       );
       layer.on({
-        click: () => {
-          onPropertySelect(id);
-          setSelectedPropertyId(id);
-        }
+        click: () => onPropertySelect(String(id))
       });
     }
   };
@@ -344,23 +366,31 @@ Proprietário: ${proprietario}
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-     {/* Contentor para o Mapa Base */}
       <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 1000 }}>
         <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
       </div>
-
-      {/* Contentor para o Controlo de Camadas */}
       <div style={{ position: 'absolute', top: '90px', right: '10px', zIndex: 999 }}>
         <LayerControl onLayerToggle={handleWmsLayerToggle} initialState={visibleWmsLayers} />
+      </div>
+      
+      <div style={{ position: 'absolute', top: '200px', left: '10px', zIndex: 1000 }}>
+        {visibleWmsLayers.propriedades_car_sp && (
+          <InfoTool 
+            onClick={() => setIsInfoToolActive(prev => !prev)} 
+            isActive={isInfoToolActive} 
+          />
+        )}
       </div>
 
       <MapContainer
         center={[-22.505, -43.179]}
         zoom={13}
         style={{ height: '100%', width: '100%' }}
-        whenCreated={(map) => (mapRef.current = map)}
+        ref={mapRef}
       >
         <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
+        
+        <MapClickHandler onMapClick={handleGetFeatureInfo} />
 
         <MapViewAnimator target={mapViewTarget} />
         <GeomanDrawControl 
@@ -374,7 +404,6 @@ Proprietário: ${proprietario}
         <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
         <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
 
-        {/* As camadas WMS DEVEM estar aqui dentro para acessar o mapa */}
         <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms"
           options={{ layers: 'imagens_satelite:propriedades_rurais', format: 'image/png', transparent: true, zIndex: 450 }}
@@ -387,7 +416,7 @@ Proprietário: ${proprietario}
           visible={visibleWmsLayers.talhoes}
           layerName="talhoes"
         />
-           <WmsLayer
+        <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms"
           options={{
             layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
@@ -398,20 +427,31 @@ Proprietário: ${proprietario}
           visible={visibleWmsLayers.propriedades_car_sp}
           layerName="propriedades_car_sp"
         />
+         <WmsLayer
+          url="http://localhost:8080/geoserver/imagens_satelite/wms" // <-- Altere o workspace
+          options={{
+            layers: 'imagens_satelite:ucs', // <-- Altere o nome completo da camada
+            format: 'image/png',
+            transparent: true,
+            zIndex: 490 // zIndex alto para ficar por cima de outras camadas
+          }}
+          visible={visibleWmsLayers.ucs} // <<-- Conecta a visibilidade ao estado
+          layerName="ucs"
+        />
         <WmsLayer
           url="https://alerta.mapbiomas.org/geoserver/wms"
           options={{
-            layers: 'mapbiomas-alerta:desmatamento_alerta', // Camada de alertas do MapBiomas
+            layers: 'mapbiomas-alerta:desmatamento_alerta',
             format: 'image/png',
             transparent: true,
-            zIndex: 480 // Aumente o zIndex para ficar sobre as outras
+            zIndex: 480,
+            cql_filter: "detection_date >= '2024-08-11' AND detection_date <= '2025-08-11'"
           }}
-          visible={visibleWmsLayers.alertas_desmatamento_mapbiomas} // Controlado pelo novo estado
+          visible={visibleWmsLayers.alertas_desmatamento_mapbiomas}
           layerName="alertas_desmatamento_mapbiomas"
         />
-        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} style={aoiStyle} />}
-        {changePolygons && <GeoJSON key={JSON.stringify(changePolygons)} data={changePolygons} style={changePolygonStyle} />}
-        {propertiesData && <GeoJSON data={propertiesData} style={propertyLayerStyle} onEachFeature={onEachProperty} />}
+        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} />}
+        {propertiesData && <GeoJSON data={propertiesData} onEachFeature={onEachProperty} />}
         
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />

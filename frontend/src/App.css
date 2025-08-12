@@ -86,8 +86,14 @@ body, #root {
 /* --- ESTILOS DA SIDEBAR --- */
 .sidebar-container {
   width: 380px; 
-  border-right: 1px solid var(--border-color);
-  background-color: var(--background-secondary);
+  /* A borda agora também usa rgba para um efeito mais suave */
+  border-right: 1px solid rgba(255, 255, 255, 0.1); 
+  
+  /* ✅ A MUDANÇA PRINCIPAL ESTÁ AQUI */
+  background-color: rgba(40, 40, 40, 0.85); /* Fundo escuro com 85% de opacidade */
+  -webkit-backdrop-filter: blur(10px);      /* Efeito de vidro fosco */
+  backdrop-filter: blur(10px);
+  
   display: flex;
   flex-direction: column;
   flex-shrink: 0;

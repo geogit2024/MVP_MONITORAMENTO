@@ -1,6 +1,24 @@
 /* src/components/SidebarCadastro.css */
 
-/* Adicione ou atualize estas regras em src/components/SidebarCadastro.css */
+/* ==================================================================== */
+/* ✅ REGRA CORRIGIDA PARA APLICAR TRANSPARÊNCIA                       */
+/* O seletor foi alterado para '.sidebar-container' para corresponder ao seu componente. */
+/* ==================================================================== */
+.sidebar-container {
+  
+  /* Cor de fundo escura com 85% de opacidade */
+  background-color: rgba(40, 40, 40, 0.85);
+
+  /* Efeito de "vidro fosco" que borra o que está atrás */
+  -webkit-backdrop-filter: blur(10px); /* Para compatibilidade com Safari */
+  backdrop-filter: blur(10px);
+  
+  /* Garante que a borda também tenha uma cor correspondente */
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+
+/* O restante do seu CSS original permanece o mesmo */
 
 .sidebar-header-flex {
   display: flex;
@@ -16,14 +34,12 @@
   color: var(--text-primary);
 }
 
-/* ✅ NOVO: Contentor para os botões de ação */
 .header-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-/* Estilos para os botões do cabeçalho */
 .add-button, .back-button {
   background-color: var(--button-secondary-bg);
   color: white;
@@ -54,8 +70,6 @@
 .search-container {
   padding: 1rem 1.5rem;
 }
-
-/* (O resto do seu CSS continua aqui sem alterações) */
 
 .search-input {
   width: 100%;
@@ -151,5 +165,5 @@
 }
 
 .file-upload-label input[type="file"] {
-  display: none; /* O input real fica escondido, usamos o label para o estilo */
+  display: none;
 }
