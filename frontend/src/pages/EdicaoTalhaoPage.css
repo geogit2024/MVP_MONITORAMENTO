@@ -1,0 +1,6 @@
+/* src/pages/EdicaoTalhaoPage.css */
+.edicao-talhao-container {
+  width: 100%;
+  height: 100%; /* Garante que a página ocupe todo o espaço disponível */
+  overflow: hidden;
+}
