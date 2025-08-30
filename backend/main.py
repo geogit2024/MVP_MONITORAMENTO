@@ -1,12 +1,12 @@
 import os
 import ee
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import date
 import json
-import asyncio # Importar asyncio para o tratamento de CancelledError
+import asyncio
 
 # --------------------------------------------------------------------------
 # IMPORTAÇÕES PARA BANCO DE DADOS
@@ -17,18 +17,23 @@ from geoalchemy2 import Geometry
 from geoalchemy2.functions import ST_AsGeoJSON
 from dotenv import load_dotenv
 from shapely.geometry import shape
+from shapely.ops import transform
 
 # --------------------------------------------------------------------------
 # INICIALIZAÇÃO E CONFIGURAÇÃO
 # --------------------------------------------------------------------------
 
-# Carrega variáveis de ambiente (do arquivo .env)
 load_dotenv()
+
+# Função para remover a dimensão Z (altitude) de uma geometria
+def remove_z_dimension(geom):
+    if geom.has_z:
+        return transform(lambda x, y, z=None: (x, y), geom)
+    return geom
 
 def init_earth_engine():
     """
-    Inicializa o Google Earth Engine, tentando primeiro com as credenciais de ambiente
-    e, como alternativa, com um arquivo de conta de serviço.
+    Inicializa o Google Earth Engine.
     """
     try:
         ee.Initialize(project='charged-polymer-442201-t5')
@@ -53,7 +58,6 @@ app = FastAPI(
     description="API para processamento de imagens de satélite e gerenciamento de propriedades rurais."
 )
 
-# Configuração do CORS para permitir requisições do frontend
 origins = ["http://localhost:5173", "http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
@@ -74,7 +78,6 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
 
-# Definição da tabela de propriedades, espelhando os campos do formulário
 propriedades_rurais = Table(
     'propriedades_rurais', metadata,
     Column('id', Integer, primary_key=True),
@@ -90,9 +93,9 @@ propriedades_rurais = Table(
     Column('ccir', String(50)),
     Column('doc_identidade_path', String(255), nullable=True),
     Column('doc_terra_path', String(255), nullable=True),
-    Column('geom', Geometry('POLYGON', srid=4326)),
+    Column('geom', Geometry('POLYGON', srid=4326, dimension=2)),
 )
-# Definição da tabela de talhões
+
 talhoes = Table(
     'talhoes', metadata,
     Column('id', Integer, primary_key=True),
@@ -100,12 +103,20 @@ talhoes = Table(
     Column('nome', String(255), nullable=False),
     Column('area', Float, nullable=False),
     Column('cultura_principal', String(255)),
-    Column('geometry', Geometry('POLYGON', srid=4326)),
+    Column('geometry', Geometry('POLYGON', srid=4326, dimension=2)),
+)
+
+reservoirs_table = Table(
+    'reservoirs', metadata,
+    Column('id', Integer, primary_key=True),
+    Column('name', String(255), nullable=False),
+    Column('description', String),
+    Column('geom', Geometry('POLYGON', srid=4326, dimension=2), nullable=False)
 )
 
 @app.on_event("startup")
 async def startup_event():
-    """Cria a tabela no banco de dados ao iniciar a API, se ela não existir."""
+    """Cria as tabelas no banco de dados ao iniciar a API, se elas não existirem."""
     try:
         with engine.connect() as connection:
             result = connection.execute(text("SELECT extname FROM pg_extension WHERE extname = 'postgis'"))
@@ -117,7 +128,6 @@ async def startup_event():
     except Exception as e:
         print(f"❌ Erro ao conectar ou criar tabelas no banco de dados: {e}")
 
-
 # --------------------------------------------------------------------------
 # MODELOS PYDANTIC (Estrutura de Dados da API)
 # --------------------------------------------------------------------------
@@ -125,7 +135,7 @@ class TalhaoCreate(BaseModel):
     nome: str
     area: float
     cultura_principal: Optional[str] = None
-    geometry: Dict[str, Any]  # GeoJSON
+    geometry: Dict[str, Any]
 
 class TalhaoDetails(BaseModel):
     id: int
@@ -202,7 +212,7 @@ class PropertyCreate(BaseModel):
     email: str
     matricula: Optional[str] = None
     ccir: Optional[str] = None
-    geometry: Dict[str, Any] # Geometria como um objeto GeoJSON
+    geometry: Dict[str, Any]
 
 class PropertyDetails(BaseModel):
     id: int
@@ -216,7 +226,7 @@ class PropertyDetails(BaseModel):
     email: str
     matricula: Optional[str] = None
     ccir: Optional[str] = None
-    geometry: Dict[str, Any] # Geometria como um objeto GeoJSON
+    geometry: Dict[str, Any]
     doc_identidade_path: Optional[str] = None
     doc_terra_path: Optional[str] = None
 
@@ -234,6 +244,16 @@ class FeatureCollection(BaseModel):
     type: str = "FeatureCollection"
     features: List[PropertyGeoJSON]
 
+class ReservoirCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    geometry: Dict[str, Any]
+
+class ReservoirDetails(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    geometry: Dict[str, Any]
 
 # --------------------------------------------------------------------------
 # FUNÇÕES AUXILIARES E CONSTANTES DO GEE
@@ -469,7 +489,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 @app.post("/api/properties", status_code=status.HTTP_201_CREATED, response_model=PropertyDetails, tags=["Properties"])
 async def create_property(property_data: PropertyCreate):
     try:
-        geom_shape = shape(property_data.geometry)
+        geom_shape_3d = shape(property_data.geometry)
+        geom_shape_2d = remove_z_dimension(geom_shape_3d)
         
         insert_query = propriedades_rurais.insert().values(
             propriedade_nome=property_data.propriedade_nome,
@@ -482,7 +503,7 @@ async def create_property(property_data: PropertyCreate):
             email=property_data.email,
             matricula=property_data.matricula,
             ccir=property_data.ccir,
-            geom=f'SRID=4326;{geom_shape.wkt}',
+            geom=f'SRID=4326;{geom_shape_2d.wkt}',
             doc_identidade_path=None,
             doc_terra_path=None
         ).returning(propriedades_rurais.c.id)
@@ -513,7 +534,8 @@ async def update_property(property_id: int, property_update_data: PropertyCreate
             if existing_id is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Propriedade não encontrada.")
 
-        geom_shape = shape(property_update_data.geometry)
+        geom_shape_3d = shape(property_update_data.geometry)
+        geom_shape_2d = remove_z_dimension(geom_shape_3d)
         
         update_values = {
             "propriedade_nome": property_update_data.propriedade_nome,
@@ -526,7 +548,7 @@ async def update_property(property_id: int, property_update_data: PropertyCreate
             "email": property_update_data.email,
             "matricula": property_update_data.matricula,
             "ccir": property_update_data.ccir,
-            "geom": f'SRID=4326;{geom_shape.wkt}'
+            "geom": f'SRID=4326;{geom_shape_2d.wkt}'
         }
 
         update_query = propriedades_rurais.update().where(propriedades_rurais.c.id == property_id).values(**update_values)
@@ -614,14 +636,15 @@ async def create_talhao_for_property(property_id: int, talhao_data: TalhaoCreate
                     detail=f"A propriedade com ID {property_id} não foi encontrada."
                 )
 
-        geom_shape = shape(talhao_data.geometry)
+        geom_shape_3d = shape(talhao_data.geometry)
+        geom_shape_2d = remove_z_dimension(geom_shape_3d)
         
         insert_query = talhoes.insert().values(
             propriedade_id=property_id,
             nome=talhao_data.nome,
             area=talhao_data.area,
             cultura_principal=talhao_data.cultura_principal,
-            geometry=f'SRID=4326;{geom_shape.wkt}'
+            geometry=f'SRID=4326;{geom_shape_2d.wkt}'
         ).returning(talhoes)
 
         with engine.connect() as connection:
@@ -675,6 +698,116 @@ async def get_property_by_id(property_id: int):
     except Exception as e:
         print(f"❌ Erro ao buscar propriedade: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro interno ao buscar propriedade.")
+
+# --------------------------------------------------------------------------
+# ENDPOINTS PARA RESERVATÓRIOS
+# --------------------------------------------------------------------------
+
+@app.post("/api/reservoirs", status_code=status.HTTP_201_CREATED, response_model=ReservoirDetails, tags=["Reservoirs"])
+async def create_reservoir(reservoir_data: ReservoirCreate):
+    try:
+        geometry_data = reservoir_data.geometry
+        geom_shape_3d = None
+
+        if geometry_data and geometry_data.get('type') == 'GeometryCollection':
+            polygon_geom = None
+            for geom in geometry_data.get('geometries', []):
+                if geom and geom.get('type') in ['Polygon', 'MultiPolygon']:
+                    polygon_geom = geom
+                    break 
+            
+            if not polygon_geom:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="O arquivo KML contém uma coleção de geometrias, mas nenhuma delas é um polígono válido."
+                )
+            geom_shape_3d = shape(polygon_geom)
+        else:
+            geom_shape_3d = shape(geometry_data)
+
+        geom_shape_2d = remove_z_dimension(geom_shape_3d)
+
+        insert_query = reservoirs_table.insert().values(
+            name=reservoir_data.name,
+            description=reservoir_data.description,
+            geom=f'SRID=4326;{geom_shape_2d.wkt}'
+        ).returning(reservoirs_table)
+
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            result = connection.execute(insert_query).mappings().first()
+            transaction.commit()
+
+            if not result:
+                raise HTTPException(status_code=500, detail="Falha ao obter os dados do reservatório após a inserção.")
+            
+            new_reservoir = dict(result)
+            geom_query = select(ST_AsGeoJSON(reservoirs_table.c.geom).label('geometry_geojson')).where(reservoirs_table.c.id == new_reservoir['id'])
+            
+            with engine.connect() as conn_geom:
+                 geom_geojson_str = conn_geom.execute(geom_query).scalar_one()
+                 new_reservoir['geometry'] = json.loads(geom_geojson_str)
+            
+            return ReservoirDetails(**new_reservoir)
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Erro ao salvar o reservatório: {e}")
+        raise HTTPException(status_code=500, detail=f"Ocorreu um erro interno ao salvar o reservatório: {e}")
+
+
+@app.get("/api/reservoirs", tags=["Reservoirs"])
+async def get_all_reservoirs():
+    query = select(
+        reservoirs_table.c.id,
+        reservoirs_table.c.name,
+        reservoirs_table.c.description,
+        ST_AsGeoJSON(reservoirs_table.c.geom).label('geometry')
+    )
+    features = []
+    try:
+        with engine.connect() as connection:
+            results = connection.execute(query).mappings().all()
+            for row in results:
+                geom_dict = json.loads(row['geometry'])
+                features.append({
+                    "type": "Feature",
+                    "geometry": geom_dict,
+                    "properties": {
+                        "id": row['id'],
+                        "name": row['name'],
+                        "description": row['description']
+                    }
+                })
+        return {"type": "FeatureCollection", "features": features}
+    except Exception as e:
+        print(f"❌ Erro ao buscar reservatórios: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao buscar reservatórios.")
+
+
+@app.delete("/api/reservoirs/{reservoir_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Reservoirs"])
+async def delete_reservoir(reservoir_id: int):
+    try:
+        check_query = select(reservoirs_table.c.id).where(reservoirs_table.c.id == reservoir_id)
+        with engine.connect() as connection:
+            existing_id = connection.execute(check_query).scalar_one_or_none()
+            if existing_id is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservatório não encontrado.")
+
+        delete_query = reservoirs_table.delete().where(reservoirs_table.c.id == reservoir_id)
+        with engine.connect() as connection:
+            transaction = connection.begin()
+            connection.execute(delete_query)
+            transaction.commit()
+        return
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"❌ Erro ao excluir reservatório (ID: {reservoir_id}): {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno ao excluir o reservatório: {e}")
+
 
 # === ENDPOINTS DO GOOGLE EARTH ENGINE ===
 @app.post("/api/earth-images/search", response_model=List[ImageInfo], tags=["Google Earth Engine"])

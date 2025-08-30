@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage';
 import MenuPage from './pages/MenuPage';
 import MainApplication from './MainApplication';
 import PropertyRegistrationPage from './pages/PropertyRegistrationPage';
+import ReservoirPanel from './pages/ReservoirPanel';
 
 /**
  * Componente de Rota Protegida.
@@ -72,6 +73,16 @@ export default function App() {
         }
       />
       
+      {/* ✅ NOVO: Rota protegida para o Painel de Reservatórios */}
+      <Route 
+        path="/reservatorios" 
+        element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <ReservoirPanel />
+          </ProtectedRoute>
+        }
+      />
+
       {/* Rota de fallback: redireciona para o menu se estiver logado, ou para o login se não estiver. */}
       <Route path="*" element={<Navigate to={isAuthenticated ? "/menu" : "/login"} />} />
     </Routes>

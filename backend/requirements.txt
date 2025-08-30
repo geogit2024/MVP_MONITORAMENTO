@@ -6,3 +6,10 @@ requests
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+SQLAlchemy
+GeoAlchemy2
+psycopg2-binary
+python-dotenv
+shapely
+python-multipart
+kml2geojson

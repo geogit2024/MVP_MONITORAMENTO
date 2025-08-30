@@ -29,6 +29,16 @@ const AnaliseIcon = () => (
     </svg>
 );
 
+// NOVO ÍCONE PARA RESERVATÓRIOS
+const ReservatorioIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+        <path d="M2 17l10 5 10-5"></path>
+        <path d="M2 12l10 5 10-5"></path>
+    </svg>
+);
+
+
 const MenuPage = () => {
   const navigate = useNavigate();
 
@@ -40,7 +50,7 @@ const MenuPage = () => {
       </header>
 
       <main className="menu-grid">
-        {/* ✅ ALTERAÇÃO: onClick agora navega para a rota de cadastro */}
+        {/* Card 1: Cadastro de Propriedades */}
         <div className="menu-card" onClick={() => navigate('/cadastro-propriedades')}>
           <div className="card-image-container">
             <img src="https://images.unsplash.com/photo-1560493676-04071c5f467b?q=80&w=1974&auto=format&fit=crop" alt="Cadastro de Propriedades" />
@@ -73,6 +83,18 @@ const MenuPage = () => {
             <div className="card-icon"><AnaliseIcon /></div>
             <h3>Módulo de Análise</h3>
             <p>Execute análises avançadas de imagens de satélite.</p>
+          </div>
+        </div>
+
+        {/* NOVO CARD: Painel de Reservatórios */}
+        <div className="menu-card" onClick={() => navigate('/reservatorios')}>
+          <div className="card-image-container">
+            <img src="https://images.unsplash.com/photo-1599387607098-1234b685123d?q=80&w=1932&auto=format&fit=crop" alt="Painel de Reservatórios" />
+          </div>
+          <div className="card-content">
+            <div className="card-icon"><ReservatorioIcon /></div>
+            <h3>Painel de Reservatórios</h3>
+            <p>Cadastre e visualize os reservatórios de água.</p>
           </div>
         </div>
       </main>
