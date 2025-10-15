@@ -14,13 +14,19 @@
     "@mapbox/togeojson": "^0.16.2",
     "@turf/turf": "^7.2.0",
     "axios": "^1.9.0",
+    "chart.js": "^4.5.1",
+    "chartjs-plugin-datalabels": "^2.2.0",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4",
     "papaparse": "^5.5.3",
     "react": "^19.1.0",
+    "react-chartjs-2": "^5.3.0",
     "react-dom": "^19.1.0",
-    "react-leaflet": "^5.0.0"
+    "react-draggable": "^4.5.0",
+    "react-leaflet": "^5.0.0",
+    "react-resizable": "^3.0.5",
+    "react-router-dom": "^7.9.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
