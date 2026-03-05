@@ -33,6 +33,13 @@
   line-height: 1;
 }
 
+.theme-toggle-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  display: block;
+}
+
 /* --- Conteúdo com Rolagem --- */
 .sidebar-content {
   flex-grow: 1;

@@ -258,6 +258,18 @@ body, #root {
     flex-grow: 1;
 }
 
+/* Cursor de consulta de informacoes da camada (icone "i"). */
+.leaflet-container.crosshair-cursor,
+.leaflet-container.crosshair-cursor * {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23007bff' stroke='white' stroke-width='1.6'/%3E%3Crect x='11.2' y='10.3' width='1.6' height='7' rx='0.8' fill='white'/%3E%3Ccircle cx='12' cy='7.4' r='1.1' fill='white'/%3E%3C/svg%3E") 13 13, pointer !important;
+}
+
+/* Suaviza visualmente a camada raster de diferenca (mudancas). */
+.leaflet-tile.difference-tile-soft {
+  filter: saturate(0.95) blur(0.35px);
+  image-rendering: auto;
+}
+
 .progress-overlay {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background-color: rgba(0, 0, 0, 0.6);
@@ -381,6 +393,16 @@ body, #root {
   position: absolute;
 }
 
+.floating-panel-shell {
+  position: absolute;
+  z-index: 1010;
+  outline: none;
+}
+
+.floating-panel-shell.is-selected .floating-panel-box {
+  box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.75), 0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
 /* Cabeçalho que servirá como alça para arrastar */
 .panel-header {
   padding: 10px 15px;
@@ -424,8 +446,8 @@ body, #root {
 /* --- Estilos obrigatórios para as alças de redimensionamento --- */
 .react-resizable-handle {
   position: absolute;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   background-repeat: no-repeat;
   background-origin: content-box;
   box-sizing: border-box;
@@ -437,6 +459,11 @@ body, #root {
   bottom: 0;
   right: 0;
   cursor: se-resize;
+}
+
+.change-detection-panel .panel-body {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .modal-header h3 {

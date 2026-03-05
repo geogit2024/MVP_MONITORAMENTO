@@ -8,6 +8,14 @@ interface LayerControlProps {
   initialState: { [key: string]: boolean };
 }
 
+const carConditionLegend = [
+  { value: 'ATIVO', color: '#2e7d32' },
+  { value: 'PENDENTE', color: '#f9a825' },
+  { value: 'SUSPENSO', color: '#ef6c00' },
+  { value: 'CANCELADO', color: '#c62828' },
+  { value: 'OUTROS', color: '#546e7a' },
+];
+
 const LayerControl: React.FC<LayerControlProps> = ({ onLayerToggle, initialState }) => {
   const [isOpen, setIsOpen] = useState(true); // Começa aberto
 
@@ -46,14 +54,28 @@ const LayerControl: React.FC<LayerControlProps> = ({ onLayerToggle, initialState
             <h4>Camadas WMS</h4>
             {/* Bloco dinâmico que cria as checkboxes a partir do estado */}
             {Object.keys(initialState).map((layerName) => (
-              <div className="layer-item" key={layerName}>
-                <input
-                  type="checkbox"
-                  id={layerName}
-                  onChange={(e) => handleToggle(layerName, e)}
-                  checked={initialState[layerName] || false}
-                />
-                <label htmlFor={layerName}>{formatLayerName(layerName)}</label>
+              <div className="layer-group" key={layerName}>
+                <div className="layer-item">
+                  <input
+                    type="checkbox"
+                    id={layerName}
+                    onChange={(e) => handleToggle(layerName, e)}
+                    checked={initialState[layerName] || false}
+                  />
+                  <label htmlFor={layerName}>{formatLayerName(layerName)}</label>
+                </div>
+
+                {layerName === 'propriedades_car_sp' && initialState[layerName] && (
+                  <div className="layer-legend">
+                    <div className="layer-legend-title">Simbologia (condicao)</div>
+                    {carConditionLegend.map((item) => (
+                      <div className="layer-legend-item" key={item.value}>
+                        <span className="layer-legend-swatch" style={{ backgroundColor: item.color }} />
+                        <span className="layer-legend-label">{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

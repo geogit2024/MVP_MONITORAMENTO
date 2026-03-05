@@ -40,7 +40,7 @@ const PropertyRegistrationPage = () => {
   const [isDrawingTalhao, setIsDrawingTalhao] = useState(false);
   const [talhaoGeometry, setTalhaoGeometry] = useState<Feature<Polygon> | null>(null);
   const [showTalhaoModal, setShowTalhaoModal] = useState(false);
-  const [baseMapKey, setBaseMapKey] = useState('satellite');
+  const [baseMapKey, setBaseMapKey] = useState('google_hybrid');
 
   // CORREÇÃO 1: Envolver a função em useCallback para garantir que ela seja estável.
   // Como ela só usa `setters` do useState, o array de dependências pode ser vazio.

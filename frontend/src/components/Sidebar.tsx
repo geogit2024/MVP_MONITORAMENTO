@@ -64,7 +64,7 @@ export default function SidebarTerritorial({
       <aside className="sidebar-container">
         <div className="sidebar-header">
           <button onClick={onToggleTheme} title="Alternar Tema" className="theme-toggle-button">
-            {theme === 'light' ? '🌙' : '☀️'}
+            <img src="/logo.png" alt="Campos Conectados" className="theme-toggle-logo" />
           </button>
         </div>
         <div className="sidebar-content">

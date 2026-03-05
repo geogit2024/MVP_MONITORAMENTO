@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import InfoTool from './InfoTool'; 
 import { MapContainer, TileLayer, useMap, GeoJSON, useMapEvents } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
@@ -14,7 +14,7 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import BaseMapSelector from './BaseMapSelector';
 import LayerControl from './LayerControl';
 
-// Corrige ícones padrão
+// Corrige icones padrao
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
@@ -27,12 +27,12 @@ export const fireIcon = new L.Icon({
 
 const baseMaps = {
   osm: {
-    name: 'Padrão',
+    name: 'PadrÃ£o',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors',
   },
   satellite: {
-    name: 'Satélite',
+    name: 'SatÃ©lite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
   },
@@ -51,6 +51,34 @@ const baseMaps = {
     url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     attribution: '&copy; Google',
   }
+};
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+const CAR_COLORS = {
+  ATIVO: '#2e7d32',
+  PENDENTE: '#f9a825',
+  SUSPENSO: '#ef6c00',
+  CANCELADO: '#c62828',
+  OUTROS: '#546e7a',
+} as const;
+
+const normalizeText = (value: unknown) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+
+const getCarConditionClass = (props: Record<string, unknown>) => {
+  const raw = props.des_condic ?? props.condicao ?? props.condic ?? '';
+  const condition = normalizeText(raw);
+  if (!condition) return 'OUTROS';
+  if (condition.includes('CANCEL')) return 'CANCELADO';
+  if (condition.includes('SUSP')) return 'SUSPENSO';
+  if (condition.includes('PEND') || condition.includes('AGUARD')) return 'PENDENTE';
+  if (condition.includes('ATIV') || condition.includes('ANALIS')) return 'ATIVO';
+  return 'OUTROS';
 };
 
 // --- COMPONENTES AUXILIARES ---
@@ -75,15 +103,26 @@ const GeomanDrawControl = ({
   onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
 }) => {
   const map = useMap();
+  const isDrawActive = Boolean(drawingEnabled || isDrawingTalhao);
 
   useEffect(() => {
     if (!map.pm) return;
 
+    if (!isDrawActive) {
+      map.pm.disableDraw();
+      map.pm.disableGlobalEditMode?.();
+      map.pm.disableGlobalRemovalMode?.();
+      map.pm.disableGlobalDragMode?.();
+      map.pm.disableGlobalCutMode?.();
+      map.pm.removeControls();
+      return;
+    }
+
     map.pm.addControls({
       position: 'topleft',
-      drawPolygon: drawingEnabled || isDrawingTalhao,
+      drawPolygon: true,
       drawCircle: false,
-      removalMode: true,
+      removalMode: false,
       drawMarker: false,
       drawCircleMarker: false,
       drawPolyline: false,
@@ -116,17 +155,15 @@ const GeomanDrawControl = ({
       map.pm.removeControls();
       map.off('pm:create', handleCreate);
     };
-  }, [map, drawingEnabled, isDrawingTalhao, onTalhaoDrawComplete, onDrawComplete]);
+  }, [map, isDrawActive, isDrawingTalhao, onTalhaoDrawComplete, onDrawComplete]);
 
   useEffect(() => {
     if (!map.pm) return;
 
-    if (drawingEnabled || isDrawingTalhao) {
-      map.pm.enableDraw('Polygon');
-    } else {
-      map.pm.disableDraw();
-    }
-  }, [drawingEnabled, isDrawingTalhao, map]);
+    // Mantem o modo de desenho desligado por padrao.
+    // O usuario inicia manualmente clicando no botao "Draw Polygon".
+    map.pm.disableDraw();
+  }, [isDrawActive, map]);
 
   return null;
 };
@@ -135,12 +172,14 @@ const DynamicTileLayer = ({
   url,
   zIndex = 10,
   opacity = 0.8,
-  attribution
+  attribution,
+  className
 }: {
   url: string | null;
   zIndex?: number;
   opacity?: number;
   attribution?: string;
+  className?: string;
 }) => {
   const map = useMap();
   const layerRef = useRef<L.TileLayer | null>(null);
@@ -151,7 +190,7 @@ const DynamicTileLayer = ({
       layerRef.current = null;
     }
     if (url) {
-      const newLayer = L.tileLayer(url, { zIndex, opacity, attribution });
+      const newLayer = L.tileLayer(url, { zIndex, opacity, attribution, className });
       newLayer.addTo(map);
       layerRef.current = newLayer;
     }
@@ -160,7 +199,7 @@ const DynamicTileLayer = ({
         map.removeLayer(layerRef.current);
       }
     };
-  }, [url, map, zIndex, opacity, attribution]);
+  }, [url, map, zIndex, opacity, attribution, className]);
 
   return null;
 };
@@ -181,6 +220,8 @@ const WmsLayer = ({ url, options, visible, layerName }: { url: string; options: 
     if (visible) {
       if (!layerRef.current) {
         layerRef.current = L.tileLayer.wms(url, options);
+      } else {
+        layerRef.current.setParams(options);
       }
       if (!map.hasLayer(layerRef.current)) {
         layerRef.current.addTo(map);
@@ -202,6 +243,204 @@ const WmsLayer = ({ url, options, visible, layerName }: { url: string; options: 
   }, [map, layerName]);
 
   return null;
+};
+
+const CarClassifiedLayer = ({ visible }: { visible: boolean }) => {
+  const map = useMap();
+  const [data, setData] = useState<FeatureCollection | null>(null);
+  const cacheRef = useRef<Map<string, FeatureCollection>>(new Map());
+  const featuresByKeyRef = useRef<Map<string, any>>(new Map());
+  const requestSeqRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getCacheKey = () => {
+    const bounds = map.getBounds().pad(0.4);
+    const zoom = map.getZoom();
+    const precision = 2;
+    const west = bounds.getWest().toFixed(precision);
+    const south = bounds.getSouth().toFixed(precision);
+    const east = bounds.getEast().toFixed(precision);
+    const north = bounds.getNorth().toFixed(precision);
+    return `${zoom}:${west},${south},${east},${north}`;
+  };
+
+  const putCache = (key: string, value: FeatureCollection) => {
+    const cache = cacheRef.current;
+    if (cache.has(key)) cache.delete(key);
+    cache.set(key, value);
+
+    const maxEntries = 30;
+    if (cache.size > maxEntries) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey) cache.delete(oldestKey);
+    }
+  };
+
+  const getFeatureKey = (feature: any, indexHint: number) => {
+    const props = feature?.properties || {};
+    return String(
+      props.cod_imovel ??
+      props.id ??
+      feature?.id ??
+      `${indexHint}-${JSON.stringify(feature?.geometry || {})}`
+    );
+  };
+
+  const mergeFeatures = (features: any[]) => {
+    const store = featuresByKeyRef.current;
+    features.forEach((feature, i) => {
+      store.set(getFeatureKey(feature, i), feature);
+    });
+
+    const maxFeatures = 50000;
+    if (store.size > maxFeatures) {
+      const toRemove = store.size - maxFeatures;
+      const keys = Array.from(store.keys()).slice(0, toRemove);
+      keys.forEach((key) => store.delete(key));
+    }
+
+    return {
+      type: 'FeatureCollection',
+      features: Array.from(store.values()) as any,
+    } as FeatureCollection;
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      if (fetchTimerRef.current) {
+        clearTimeout(fetchTimerRef.current);
+        fetchTimerRef.current = null;
+      }
+      featuresByKeyRef.current.clear();
+      setData(null);
+      return;
+    }
+
+    const fetchByBbox = async () => {
+      const bounds = map.getBounds().pad(0.35);
+      const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+      const cacheKey = getCacheKey();
+      const cached = cacheRef.current.get(cacheKey);
+      const reqId = ++requestSeqRef.current;
+
+      if (cached) {
+        setData(mergeFeatures(cached.features as any[]));
+        return;
+      }
+
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      try {
+        const allFeatures: any[] = [];
+        let startIndex = 0;
+        const pageSize = 700;
+        let hasNext = true;
+        let pageCount = 0;
+        const maxPages = 80;
+
+        while (hasNext && pageCount < maxPages) {
+          let payload: any = null;
+          let pageLoaded = false;
+
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            const response = await fetch(
+              `${API_BASE_URL}/api/wfs/car-features?bbox=${encodeURIComponent(bbox)}&start_index=${startIndex}&count=${pageSize}`,
+              { signal: controller.signal }
+            );
+            const parsed = await response.json();
+            if (response.ok) {
+              payload = parsed;
+              pageLoaded = true;
+              break;
+            }
+            if (attempt === 3) {
+              throw new Error(parsed?.detail || 'Falha ao carregar feicoes CAR.');
+            }
+          }
+
+          if (!pageLoaded) break;
+
+          const pageFeatures = Array.isArray(payload?.features) ? payload.features : [];
+          allFeatures.push(...pageFeatures);
+
+          if (requestSeqRef.current !== reqId) return;
+          setData(mergeFeatures(pageFeatures));
+
+          if (typeof payload?.nextStartIndex === 'number' && payload.nextStartIndex > startIndex) {
+            startIndex = payload.nextStartIndex;
+          } else {
+            hasNext = false;
+          }
+          pageCount += 1;
+        }
+
+        if (requestSeqRef.current === reqId) {
+          const featureCollection = mergeFeatures(allFeatures);
+          setData(featureCollection);
+          putCache(cacheKey, featureCollection);
+        }
+      } catch (err) {
+        if ((err as Error)?.name !== 'AbortError') {
+          console.error('Erro ao carregar camada CAR classificada:', err);
+        }
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+      }
+    };
+
+    const scheduleFetch = () => {
+      if (fetchTimerRef.current) clearTimeout(fetchTimerRef.current);
+      fetchTimerRef.current = setTimeout(() => {
+        fetchByBbox();
+      }, 180);
+    };
+
+    scheduleFetch();
+    map.on('moveend', scheduleFetch);
+    map.on('zoomend', scheduleFetch);
+
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+      if (fetchTimerRef.current) {
+        clearTimeout(fetchTimerRef.current);
+        fetchTimerRef.current = null;
+      }
+      map.off('moveend', scheduleFetch);
+      map.off('zoomend', scheduleFetch);
+    };
+  }, [map, visible]);
+
+  if (!visible || !data) return null;
+
+  return (
+    <GeoJSON
+      data={data}
+      style={(feature: any) => {
+        const conditionClass = getCarConditionClass(feature?.properties || {});
+        const fillColor = CAR_COLORS[conditionClass as keyof typeof CAR_COLORS] || CAR_COLORS.OUTROS;
+        return {
+          color: '#2f3b45',
+          weight: 1.2,
+          fillColor,
+          fillOpacity: 0.45,
+        };
+      }}
+    />
+  );
 };
 
 
@@ -246,11 +485,27 @@ export default function MapView({
   isDrawingTalhao,
   onTalhaoDrawComplete
 }: MapViewProps) {
+  type NominatimResult = {
+    display_name?: string;
+    lat?: string;
+    lon?: string;
+    boundingbox?: [string, string, string, string] | string[];
+  };
+
   const [showFirmsPoints, setShowFirmsPoints] = useState(false);
   const [showPrecipitation, setShowPrecipitation] = useState(false);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [searchError, setSearchError] = useState('');
+  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+  const [locationSuggestions, setLocationSuggestions] = useState<NominatimResult[]>([]);
+  const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(-1);
+  const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
   const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const [isInfoToolActive, setIsInfoToolActive] = useState(false);
+  const suggestionAbortRef = useRef<AbortController | null>(null);
+  const suggestionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeInfoLayer, setActiveInfoLayer] = useState<'car' | 'mapbiomas' | null>(null);
   const [visibleWmsLayers, setVisibleWmsLayers] = useState({
     propriedades_rurais: false,
     talhoes: false,
@@ -260,66 +515,110 @@ export default function MapView({
   });
 
   const handleWmsLayerToggle = (layerName: string, isVisible: boolean) => {
-    if (layerName === 'propriedades_car_sp' && !isVisible) {
-      setIsInfoToolActive(false);
+    if (!isVisible) {
+      if (layerName === 'propriedades_car_sp' && activeInfoLayer === 'car') {
+        setActiveInfoLayer(null);
+      }
+      if (layerName === 'alertas_desmatamento_mapbiomas' && activeInfoLayer === 'mapbiomas') {
+        setActiveInfoLayer(null);
+      }
     }
     setVisibleWmsLayers(prev => ({ ...prev, [layerName]: isVisible }));
   };
 
+  const formatPropertiesForPopup = (props: Record<string, any>, title: string) => {
+    const entries = Object.entries(props || {})
+      .filter(([, value]) => value !== null && value !== undefined && value !== '');
+    const rows = entries.slice(0, 20)
+      .map(([key, value]) => `<p><strong>${key}:</strong> ${String(value)}</p>`)
+      .join('');
+    return `<div><h4>${title}</h4>${rows || '<p>Nenhum atributo disponivel.</p>'}</div>`;
+  };
+
   const handleGetFeatureInfo = (e: L.LeafletMouseEvent) => {
-    if (!isInfoToolActive || !visibleWmsLayers.propriedades_car_sp || !mapRef.current) {
+    if (!activeInfoLayer || !mapRef.current) {
       return;
     }
+
+    const selectedLayer = activeInfoLayer;
+
+    if (selectedLayer === 'car' && !visibleWmsLayers.propriedades_car_sp) return;
+    if (selectedLayer === 'mapbiomas' && !visibleWmsLayers.alertas_desmatamento_mapbiomas) return;
+
     const map = mapRef.current;
     const point = map.latLngToContainerPoint(e.latlng);
     const size = map.getSize();
     const bounds = map.getBounds().toBBoxString();
-    
-    const url = 'http://localhost:8080/geoserver/imagens_satelite/wms';
-    const params = {
-      service: 'WMS',
-      version: '1.1.1',
-      request: 'GetFeatureInfo',
-      layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
-      query_layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
+
+    const body = {
+      layerType: selectedLayer,
       bbox: bounds,
-      feature_count: 10,
-      height: size.y,
       width: size.x,
-      info_format: 'application/json',
-      srs: 'EPSG:4326',
+      height: size.y,
       x: Math.round(point.x),
       y: Math.round(point.y),
     };
-    
-    const wmsUrl = `${url}?${new URLSearchParams(params as any)}`;
 
-    fetch(wmsUrl)
-      .then(response => response.json())
+    fetch(`${API_BASE_URL}/api/wms/feature-info`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify(body),
+    })
+      .then(async response => {
+        const text = await response.text();
+        let payload: any = {};
+        try {
+          payload = text ? JSON.parse(text) : {};
+        } catch {
+          payload = { detail: text || 'Resposta invalida do servico.' };
+        }
+        if (!response.ok) {
+          throw new Error(payload?.detail || 'Falha ao consultar GetFeatureInfo.');
+        }
+        return payload;
+      })
       .then(data => {
         if (data && data.features && data.features.length > 0) {
           const feature = data.features[0];
           const props = feature.properties;
-          const content = `
-            <div>
-              <h4>Informações do Imóvel</h4>
-              <p><strong>Código:</strong> ${props.cod_imovel}</p>
-              <p><strong>Município:</strong> ${props.nom_munici}</p>
-              <p><strong>Área (ha):</strong> ${parseFloat(props.num_area).toFixed(2)}</p>
-              <p><strong>Condição:</strong> ${props.des_condic}</p>
-            </div>
-          `;
+          const content = selectedLayer === 'car'
+            ? `
+              <div>
+                <h4>Informacoes do Imovel</h4>
+                <p><strong>Codigo:</strong> ${props.cod_imovel ?? '-'}</p>
+                <p><strong>Municipio:</strong> ${props.nom_munici ?? '-'}</p>
+                <p><strong>Area (ha):</strong> ${props.num_area ? parseFloat(props.num_area).toFixed(2) : '-'}</p>
+                <p><strong>Condicao:</strong> ${props.des_condic ?? '-'}</p>
+              </div>
+            `
+            : formatPropertiesForPopup(props, 'Alerta MapBiomas');
+
           L.popup()
             .setLatLng(e.latlng)
             .setContent(content)
+            .openOn(map);
+        } else {
+          L.popup()
+            .setLatLng(e.latlng)
+            .setContent('<div><p>Nenhuma feicao encontrada neste ponto.</p></div>')
             .openOn(map);
         }
       })
       .catch(error => {
         console.error('Erro ao buscar GetFeatureInfo:', error);
+        const fallbackMessage = selectedLayer === 'mapbiomas'
+          ? 'Servico MapBiomas temporariamente indisponivel. Tente novamente em instantes.'
+          : 'Falha ao consultar informacoes da camada.';
+        L.popup()
+          .setLatLng(e.latlng)
+          .setContent(`<div><p>${fallbackMessage}</p></div>`)
+          .openOn(map);
       })
       .finally(() => {
-        setIsInfoToolActive(false);
+        setActiveInfoLayer(null);
       });
   };
 
@@ -341,19 +640,19 @@ export default function MapView({
   useEffect(() => {
   if (!mapRef.current) return;
   const mapContainer = mapRef.current.getContainer();
-  if (isInfoToolActive) {
+  if (activeInfoLayer) {
     mapContainer.classList.add('crosshair-cursor');
   } else {
     mapContainer.classList.remove('crosshair-cursor');
   }
-}, [isInfoToolActive]);
+}, [activeInfoLayer]);
 
   const onEachProperty = (feature: Feature, layer: Layer) => {
     if (feature.properties) {
       const { nome, proprietario, id } = feature.properties;
       layer.bindPopup(
         `<b>${nome}</b>  
-         Proprietário: ${proprietario}  
+         ProprietÃ¡rio: ${proprietario}  
          <small>Clique para ver detalhes</small>`
       );
       layer.on({
@@ -363,21 +662,359 @@ export default function MapView({
   };
 
   const activeBaseMap = baseMaps[baseMapKey as keyof typeof baseMaps] || baseMaps.osm;
+  const aoiStyle = useMemo(
+    () =>
+      ({
+        color: '#4aa3ff',
+        weight: 2,
+        opacity: 0.78,
+        fillColor: '#9ad8ff',
+        fillOpacity: 0.14,
+        lineCap: 'round',
+        lineJoin: 'round',
+      } as L.PathOptions),
+    []
+  );
+
+  const changePolygonsStyle = useMemo(
+    () =>
+      ({
+        color: '#22c55e',
+        weight: 1.4,
+        opacity: 0.55,
+        fillColor: '#22c55e',
+        fillOpacity: 0.1,
+        lineCap: 'round',
+        lineJoin: 'round',
+      } as L.PathOptions),
+    []
+  );
+
+  const mapbiomasWmsOptions = useMemo(
+    () =>
+      ({
+        layers: 'mapbiomas-alertas:v_alerts_last_status',
+        styles: '',
+        format: 'image/png',
+        transparent: true,
+        version: '1.1.1',
+        zIndex: 480,
+        tiled: true,
+        updateWhenIdle: true,
+        updateWhenZooming: false,
+        keepBuffer: 1,
+        detectRetina: false,
+        crossOrigin: true,
+        minZoom: 6,
+      } as L.WMSOptions),
+    []
+  );
+
+  const flyToNominatimResult = (result: NominatimResult) => {
+    if (!mapRef.current) return false;
+
+    const bbox = result?.boundingbox;
+    const lat = Number(result?.lat);
+    const lon = Number(result?.lon);
+
+    if (Array.isArray(bbox) && bbox.length === 4) {
+      const south = Number(bbox[0]);
+      const north = Number(bbox[1]);
+      const west = Number(bbox[2]);
+      const east = Number(bbox[3]);
+
+      if (
+        Number.isFinite(south) &&
+        Number.isFinite(north) &&
+        Number.isFinite(west) &&
+        Number.isFinite(east)
+      ) {
+        mapRef.current.flyToBounds(
+          [
+            [south, west],
+            [north, east],
+          ],
+          { padding: [40, 40], duration: 1.2 }
+        );
+        return true;
+      }
+    }
+
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      mapRef.current.flyTo([lat, lon], 14, { duration: 1.2 });
+      return true;
+    }
+
+    return false;
+  };
+
+  const handleSelectSuggestion = (suggestion: NominatimResult) => {
+    setLocationQuery(suggestion.display_name || locationQuery);
+    setIsSuggestionsOpen(false);
+    setHighlightedSuggestionIndex(-1);
+    setSearchError('');
+  };
+
+  const handleLocationSearch = async () => {
+    const query = locationQuery.trim();
+    if (!query || !mapRef.current) return;
+
+    setSearchError('');
+    setIsSearchingLocation(true);
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao consultar o servico de busca de local.');
+      }
+
+      const results = await response.json();
+      if (!Array.isArray(results) || results.length === 0) {
+        setSearchError('Local nao encontrado.');
+        return;
+      }
+
+      const best = results[0];
+      const moved = flyToNominatimResult(best);
+      if (!moved) setSearchError('Nao foi possivel posicionar o mapa para esse local.');
+    } catch (err) {
+      console.error('Erro na busca de local:', err);
+      setSearchError('Erro ao buscar local. Tente novamente.');
+    } finally {
+      setIsSearchingLocation(false);
+    }
+  };
+
+  useEffect(() => {
+    const query = locationQuery.trim();
+
+    if (suggestionDebounceRef.current) {
+      clearTimeout(suggestionDebounceRef.current);
+      suggestionDebounceRef.current = null;
+    }
+
+    if (suggestionAbortRef.current) {
+      suggestionAbortRef.current.abort();
+      suggestionAbortRef.current = null;
+    }
+
+    if (query.length < 3) {
+      setLocationSuggestions([]);
+      setHighlightedSuggestionIndex(-1);
+      return;
+    }
+
+    suggestionDebounceRef.current = setTimeout(async () => {
+      const controller = new AbortController();
+      suggestionAbortRef.current = controller;
+      setIsSearchingSuggestions(true);
+
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=6&q=${encodeURIComponent(query)}`;
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+          throw new Error('Falha ao consultar sugestoes.');
+        }
+
+        const results = await response.json();
+        const suggestions = Array.isArray(results) ? (results as NominatimResult[]) : [];
+        setLocationSuggestions(suggestions);
+        setIsSuggestionsOpen(true);
+        setHighlightedSuggestionIndex(suggestions.length ? 0 : -1);
+      } catch (err) {
+        if ((err as Error)?.name !== 'AbortError') {
+          setLocationSuggestions([]);
+          setHighlightedSuggestionIndex(-1);
+        }
+      } finally {
+        setIsSearchingSuggestions(false);
+        if (suggestionAbortRef.current === controller) {
+          suggestionAbortRef.current = null;
+        }
+      }
+    }, 300);
+
+    return () => {
+      if (suggestionDebounceRef.current) {
+        clearTimeout(suggestionDebounceRef.current);
+        suggestionDebounceRef.current = null;
+      }
+    };
+  }, [locationQuery]);
+
+  useEffect(() => {
+    return () => {
+      if (suggestionDebounceRef.current) {
+        clearTimeout(suggestionDebounceRef.current);
+        suggestionDebounceRef.current = null;
+      }
+      if (suggestionAbortRef.current) {
+        suggestionAbortRef.current.abort();
+        suggestionAbortRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 1000 }}>
         <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
       </div>
+      <div
+        style={{
+          position: 'absolute',
+          top: '10px',
+          left: '50px',
+          zIndex: 1200,
+          background: 'rgba(255,255,255,0.95)',
+          borderRadius: '8px',
+          padding: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          minWidth: '280px'
+        }}
+      >
+        <div style={{ display: 'flex', gap: '8px', position: 'relative' }}>
+          <input
+            type="text"
+            value={locationQuery}
+            placeholder="Buscar local (cidade, bairro, endereco)"
+            onChange={(e) => {
+              setLocationQuery(e.target.value);
+              setIsSuggestionsOpen(true);
+            }}
+            onFocus={() => {
+              if (locationSuggestions.length > 0) setIsSuggestionsOpen(true);
+            }}
+            onBlur={() => {
+              setTimeout(() => setIsSuggestionsOpen(false), 120);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (!locationSuggestions.length) return;
+                setIsSuggestionsOpen(true);
+                setHighlightedSuggestionIndex((prev) => (prev + 1) % locationSuggestions.length);
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (!locationSuggestions.length) return;
+                setIsSuggestionsOpen(true);
+                setHighlightedSuggestionIndex((prev) => (prev <= 0 ? locationSuggestions.length - 1 : prev - 1));
+                return;
+              }
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                // Busca apenas por clique no botao "Pesquisar".
+                return;
+              }
+              if (e.key === 'Escape') {
+                setIsSuggestionsOpen(false);
+                setHighlightedSuggestionIndex(-1);
+              }
+            }}
+            style={{
+              flex: 1,
+              padding: '8px',
+              border: '1px solid #cfd8dc',
+              borderRadius: '6px',
+              fontSize: '14px'
+            }}
+          />
+          {isSuggestionsOpen && (locationSuggestions.length > 0 || isSearchingSuggestions) && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: '74px',
+                top: '41px',
+                maxHeight: '260px',
+                overflowY: 'auto',
+                background: '#fff',
+                border: '1px solid #cfd8dc',
+                borderRadius: '6px',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+                zIndex: 1300
+              }}
+            >
+              {isSearchingSuggestions && (
+                <div style={{ padding: '8px 10px', fontSize: '12px', color: '#4b5563' }}>
+                  Buscando sugestoes...
+                </div>
+              )}
+              {!isSearchingSuggestions && locationSuggestions.map((item, index) => (
+                <button
+                  key={`${item.display_name}-${index}`}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleSelectSuggestion(item)}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    border: 'none',
+                    borderBottom: index === locationSuggestions.length - 1 ? 'none' : '1px solid #eef2f7',
+                    background: index === highlightedSuggestionIndex ? '#e8f0fe' : '#fff',
+                    padding: '8px 10px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    lineHeight: 1.35
+                  }}
+                >
+                  {item.display_name || 'Local sem descricao'}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleLocationSearch}
+            disabled={isSearchingLocation}
+            style={{
+              padding: '8px 10px',
+              border: 'none',
+              borderRadius: '6px',
+              background: '#1f6feb',
+              color: '#fff',
+              cursor: isSearchingLocation ? 'not-allowed' : 'pointer',
+              opacity: isSearchingLocation ? 0.7 : 1
+            }}
+          >
+            {isSearchingLocation ? '...' : 'Pesquisar'}
+          </button>
+        </div>
+        {searchError && (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: '#b42318' }}>
+            {searchError}
+          </div>
+        )}
+      </div>
       <div style={{ position: 'absolute', top: '90px', right: '10px', zIndex: 999 }}>
         <LayerControl onLayerToggle={handleWmsLayerToggle} initialState={visibleWmsLayers} />
       </div>
       
-      <div style={{ position: 'absolute', top: '200px', left: '10px', zIndex: 1000 }}>
+      <div style={{ position: 'absolute', top: '260px', right: '10px', zIndex: 1200, display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {visibleWmsLayers.propriedades_car_sp && (
-          <InfoTool 
-            onClick={() => setIsInfoToolActive(prev => !prev)} 
-            isActive={isInfoToolActive} 
+          <InfoTool
+            onClick={() => setActiveInfoLayer(prev => prev === 'car' ? null : 'car')}
+            isActive={activeInfoLayer === 'car'}
+            title="Consultar informacoes da camada CAR (clique e depois no mapa)"
+          />
+        )}
+        {visibleWmsLayers.alertas_desmatamento_mapbiomas && (
+          <InfoTool
+            onClick={() => setActiveInfoLayer(prev => prev === 'mapbiomas' ? null : 'mapbiomas')}
+            isActive={activeInfoLayer === 'mapbiomas'}
+            title="Consultar informacoes dos alertas MapBiomas (clique e depois no mapa)"
           />
         )}
       </div>
@@ -400,9 +1037,15 @@ export default function MapView({
           onTalhaoDrawComplete={onTalhaoDrawComplete}
         />
         
-        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Índice Calculado" />
-        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pré-visualização" />
-        <DynamicTileLayer url={differenceLayerUrl} zIndex={differenceLayerZIndex} opacity={0.7} attribution="Diferença NDVI" />
+        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Ãndice Calculado" />
+        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="PrÃ©-visualizaÃ§Ã£o" />
+        <DynamicTileLayer
+          url={differenceLayerUrl}
+          zIndex={differenceLayerZIndex}
+          opacity={0.62}
+          attribution="DiferenÃƒÂ§a NDVI"
+          className="difference-tile-soft"
+        />
 
         <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms"
@@ -416,17 +1059,7 @@ export default function MapView({
           visible={visibleWmsLayers.talhoes}
           layerName="talhoes"
         />
-        <WmsLayer
-          url="http://localhost:8080/geoserver/imagens_satelite/wms"
-          options={{
-            layers: 'imagens_satelite:PROPRIEDADES_CAR_SP',
-            format: 'image/png',
-            transparent: true,
-            zIndex: 470
-          }}
-          visible={visibleWmsLayers.propriedades_car_sp}
-          layerName="propriedades_car_sp"
-        />
+        <CarClassifiedLayer visible={visibleWmsLayers.propriedades_car_sp} />
          <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms" // <-- Altere o workspace
           options={{
@@ -438,19 +1071,15 @@ export default function MapView({
           visible={visibleWmsLayers.ucs} // <<-- Conecta a visibilidade ao estado
           layerName="ucs"
         />
-        <WmsLayer
-          url="https://alerta.mapbiomas.org/geoserver/wms"
-          options={{
-            layers: 'mapbiomas-alerta:desmatamento_alerta',
-            format: 'image/png',
-            transparent: true,
-            zIndex: 480,
-            cql_filter: "detection_date >= '2024-08-11' AND detection_date <= '2025-08-11'"
-          }}
-          visible={visibleWmsLayers.alertas_desmatamento_mapbiomas}
-          layerName="alertas_desmatamento_mapbiomas"
-        />
-        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} />}
+  <WmsLayer
+  url="https://production.alerta.mapbiomas.org/geoserver/ows"
+  options={mapbiomasWmsOptions}
+  visible={visibleWmsLayers.alertas_desmatamento_mapbiomas}
+  layerName="alertas_desmatamento_mapbiomas"
+/>
+
+        {changePolygons && <GeoJSON data={changePolygons as any} style={changePolygonsStyle} />}
+        {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} style={aoiStyle} />}
         {propertiesData && <GeoJSON data={propertiesData} onEachFeature={onEachProperty} />}
         
         {showFirmsPoints && <FirmsDataLayer />}
@@ -462,9 +1091,11 @@ export default function MapView({
           {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
         </button>
         <button className="map-layer-button precipitation" onClick={() => setShowPrecipitation(p => !p)}>
-          {showPrecipitation ? 'Ocultar Precipitação' : 'Mostrar Precipitação'}
+          {showPrecipitation ? 'Ocultar PrecipitaÃ§Ã£o' : 'Mostrar PrecipitaÃ§Ã£o'}
         </button>
       </div>
     </div>
   );
 }
+
+

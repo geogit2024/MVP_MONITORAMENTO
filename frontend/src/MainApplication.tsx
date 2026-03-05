@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
 import { Feature, FeatureCollection } from 'geojson';
 import type { Property } from './components/SidebarCadastro';
@@ -11,6 +11,7 @@ import SaviResultPanel from './components/SaviResultPanel';
 import MsaviResultPanel from './components/MsaviResultPanel';
 import NdreResultPanel from './components/NdreResultPanel';
 import ChangeDetectionPanel from './components/ChangeDetectionPanel';
+import AgronomistReportModal, { type AgronomistReportData } from './components/AgronomistReportModal';
 import { MapStateProvider } from './context/MapStateContext';
 
 import './App.css';
@@ -65,6 +66,39 @@ export interface IndexResult {
     classification?: NdviAreas | SaviAreas | MsaviAreas | NdreAreas;
 }
 
+interface AgronomoHistoryItem {
+  id: number;
+  talhao: string;
+  area_ha: number;
+  indice: string;
+  periodo: { inicio: string; fim: string };
+  nivel_atencao: string;
+  timestamp: string;
+  resumo: string;
+}
+
+interface AgronomoComparisonResponse {
+  atual: { id: number; nivel_atencao: string; timestamp: string; resumo: string };
+  anterior: { id: number; nivel_atencao: string; timestamp: string; resumo: string } | null;
+}
+
+interface AgronomoPayload {
+  talhao: string;
+  area_ha: number;
+  indice: string;
+  periodo: { inicio: string; fim: string };
+  valores_temporais: Array<{ data?: string; valor: number }>;
+  estatisticas: {
+    min: number;
+    max: number;
+    media: number;
+    tendencia: string;
+    variacao_percentual: number;
+  };
+  data_pico_vegetativo?: string | null;
+  data_queda_brusca?: string | null;
+}
+
 
 interface NotificationProps { message: string; type: 'error' | 'success'; onDismiss: () => void; }
 interface LoadingIndicatorProps { text: string; subtext: string; }
@@ -86,6 +120,84 @@ const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({ text, subtext }) =>
     <div className="progress-overlay"><div className="progress-spinner"></div><p>{text}</p><span>{subtext}</span></div>
 );
 
+let html2canvasLoaderPromise: Promise<any> | null = null;
+
+const loadHtml2Canvas = async (): Promise<any> => {
+    const existing = (window as any).html2canvas;
+    if (existing) return existing;
+
+    if (!html2canvasLoaderPromise) {
+        html2canvasLoaderPromise = new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+            script.async = true;
+            script.onload = () => {
+                const loaded = (window as any).html2canvas;
+                if (loaded) resolve(loaded);
+                else reject(new Error('html2canvas carregou, mas não ficou disponível em window.'));
+            };
+            script.onerror = () => reject(new Error('Falha ao carregar html2canvas via CDN.'));
+            document.head.appendChild(script);
+        });
+    }
+
+    return html2canvasLoaderPromise;
+};
+
+const buildHistogramSvgDataUri = (payload: AgronomoPayload | null): string | null => {
+    if (!payload || !Array.isArray(payload.valores_temporais) || payload.valores_temporais.length === 0) return null;
+
+    const width = 860;
+    const height = 240;
+    const paddingX = 52;
+    const paddingTop = 24;
+    const paddingBottom = 54;
+    const chartW = width - paddingX * 2;
+    const chartH = height - paddingTop - paddingBottom;
+    const points = payload.valores_temporais.map((p, i) => ({
+        label: String(p.data ?? `P${i + 1}`),
+        value: Number(p.valor || 0),
+    }));
+    const maxVal = Math.max(...points.map((p) => p.value), 0.0001);
+    const barGap = 10;
+    const barW = Math.max(16, (chartW - barGap * (points.length - 1)) / points.length);
+
+    const bars = points
+        .map((p, i) => {
+            const h = (p.value / maxVal) * chartH;
+            const x = paddingX + i * (barW + barGap);
+            const y = paddingTop + (chartH - h);
+            const textY = y - 5;
+            const labelY = height - 24;
+            return `
+<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="#2f6fdd" />
+<text x="${(x + barW / 2).toFixed(1)}" y="${textY.toFixed(1)}" text-anchor="middle" font-size="10" fill="#344054">${p.value.toFixed(2)}</text>
+<text x="${(x + barW / 2).toFixed(1)}" y="${labelY}" text-anchor="middle" font-size="10" fill="#475467">${p.label}</text>`;
+        })
+        .join('');
+
+    const yTicks = [0, 0.25, 0.5, 0.75, 1]
+        .map((r) => {
+            const v = maxVal * r;
+            const y = paddingTop + chartH - chartH * r;
+            return `
+<line x1="${paddingX}" y1="${y.toFixed(1)}" x2="${paddingX + chartW}" y2="${y.toFixed(1)}" stroke="#e5e7eb" stroke-width="1" />
+<text x="${paddingX - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#667085">${v.toFixed(2)}</text>`;
+        })
+        .join('');
+
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="${width}" height="${height}" fill="#ffffff"/>
+  <text x="${paddingX}" y="14" font-size="12" font-weight="700" fill="#101828">Histograma de variacao do indice (${payload.indice})</text>
+  ${yTicks}
+  <line x1="${paddingX}" y1="${paddingTop + chartH}" x2="${paddingX + chartW}" y2="${paddingTop + chartH}" stroke="#98a2b3" stroke-width="1.2" />
+  ${bars}
+</svg>`.trim();
+
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+};
+
 export default function MainApplication() {
     const [activeModule, setActiveModule] = useState<'territorial' | 'clima'>('territorial');
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
@@ -97,13 +209,16 @@ export default function MainApplication() {
     const [carouselItems, setCarouselItems] = useState<ImageInfo[]>([]);
     const [loadingState, setLoadingState] = useState<'idle' | 'searching' | 'calculating' | 'detectingChange' | 'downloading' | 'loading_preview'>('idle');
     const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
+    const [timelineIndex, setTimelineIndex] = useState(0);
+    const [timelinePlaying, setTimelinePlaying] = useState(false);
+    const [timelineSpeedMs, setTimelineSpeedMs] = useState(1200);
     const [activeAoi, setActiveAoi] = useState<Feature | null>(null);
     const [calculatedIndices, setCalculatedIndices] = useState<IndexResult[]>([]);
     const [visibleLayerUrl, setVisibleLayerUrl] = useState<string | null>(null);
     const [previewLayerUrl, setPreviewLayerUrl] = useState<string | null>(null);
     const [changePolygons, setChangePolygons] = useState<Feature | null>(null);
     const [notification, setNotification] = useState<{ message: string, type: 'error' | 'success' } | null>(null);
-    const [baseMapKey, setBaseMapKey] = useState<string>('satellite');
+    const [baseMapKey, setBaseMapKey] = useState<string>('google_hybrid');
     const [mapViewTarget, setMapViewTarget] = useState<LatLngBoundsExpression | null>(null);
     const [selectedIndices, setSelectedIndices] = useState<string[]>(['NDVI']);
     const [changeThreshold, setChangeThreshold] = useState(0.25);
@@ -121,6 +236,14 @@ export default function MainApplication() {
     const [refreshTrigger, setRefreshTrigger] = useState(Date.now());
 
     const [changeAreas, setChangeAreas] = useState<{ gain: number; loss: number; total: number } | null>(null);
+    const [agronomoReport, setAgronomoReport] = useState<AgronomistReportData | null>(null);
+    const [agronomoLoading, setAgronomoLoading] = useState(false);
+    const [agronomoError, setAgronomoError] = useState<string | null>(null);
+    const [agronomoHistory, setAgronomoHistory] = useState<AgronomoHistoryItem[]>([]);
+    const [agronomoComparison, setAgronomoComparison] = useState<AgronomoComparisonResponse | null>(null);
+    const [agronomoModalOpen, setAgronomoModalOpen] = useState(false);
+    const [agronomoPayloadSnapshot, setAgronomoPayloadSnapshot] = useState<AgronomoPayload | null>(null);
+    const previewTileCacheRef = useRef<Record<string, string>>({});
 
     useEffect(() => {
         const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({ id: `index-${index.indexName}`, date: index.indexName, thumbnailUrl: INDEX_LAYER_ICON_URI }));
@@ -128,6 +251,20 @@ export default function MainApplication() {
         const items = [...virtualChangeItem, ...virtualIndexItems, ...apiImages];
         setCarouselItems(items);
     }, [apiImages, changePolygons, calculatedIndices]);
+    const timelineImages = useMemo(() => {
+        return apiImages
+            .filter((img) => selectedImageIds.includes(img.id))
+            .sort((a, b) => {
+                const ta = new Date(a.date.split('/').reverse().join('-')).getTime();
+                const tb = new Date(b.date.split('/').reverse().join('-')).getTime();
+                return ta - tb;
+            });
+    }, [apiImages, selectedImageIds]);
+    const selectableImageIds = useMemo(() => apiImages.map((img) => img.id), [apiImages]);
+    const allSelectableSelected = useMemo(() => {
+        if (selectableImageIds.length === 0) return false;
+        return selectableImageIds.every((id) => selectedImageIds.includes(id));
+    }, [selectableImageIds, selectedImageIds]);
 
     const showNotification = useCallback((message: string, type: 'error' | 'success') => { setNotification({ message, type }); }, []);
     
@@ -160,7 +297,9 @@ export default function MainApplication() {
     const handleSearchImages = useCallback(async (geometry: Feature['geometry']) => {
         if (!satellite) { showNotification('Selecione um satélite.', 'error'); return; }
         setLoadingState('searching');
-        setSelectedImageIds([]); 
+        setSelectedImageIds([]);
+        setTimelineIndex(0);
+        setTimelinePlaying(false);
         resetAnalysisLayers();
         try {
             const resp = await fetch(`${API_BASE_URL}/api/earth-images/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dateFrom, dateTo, cloudPct, satellite, polygon: geometry }) });
@@ -245,23 +384,101 @@ export default function MainApplication() {
         }
     }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification, resetAnalysisLayers]);
 
-    const handlePreviewImage = useCallback(async (imageId: string) => {
-        if (!activeAoi || !satellite) { showNotification("Defina uma AOI e selecione um satélite primeiro.", "error"); return; }
-        setLoadingState('loading_preview');
-        setVisibleLayerUrl(null);
-        setDifferenceLayerUrl(null);
-        setIsChangeLayerVisible(false);
-        try {
-            const res = await fetch(`${API_BASE_URL}/api/earth-images/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry }) });
-            if (!res.ok) { throw new Error("Falha ao carregar pré-visualização da imagem."); }
-            const data = await res.json();
-            setPreviewLayerUrl(data.tileUrl);
-        } catch (error: any) {
-            showNotification(error.message || "Erro ao carregar pré-visualização.", "error");
-        } finally {
-            setLoadingState('idle');
+    const fetchPreviewTileUrl = useCallback(async (imageId: string, silent = false): Promise<string> => {
+        if (!activeAoi || !satellite) {
+            throw new Error("Defina uma AOI e selecione um satelite primeiro.");
         }
-    }, [activeAoi, satellite, showNotification]);
+
+        const cached = previewTileCacheRef.current[imageId];
+        if (cached) return cached;
+
+        if (!silent) setLoadingState('loading_preview');
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/earth-images/preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry }),
+            });
+            if (!res.ok) throw new Error("Falha ao carregar pre-visualizacao da imagem.");
+            const data = await res.json();
+            previewTileCacheRef.current[imageId] = data.tileUrl;
+            return data.tileUrl as string;
+        } finally {
+            if (!silent) setLoadingState('idle');
+        }
+    }, [activeAoi, satellite]);
+
+    const showTimelineFrame = useCallback(async (frameIndex: number) => {
+        if (!timelineImages.length) return;
+        const safeIndex = Math.max(0, Math.min(frameIndex, timelineImages.length - 1));
+        const imageId = timelineImages[safeIndex].id;
+        try {
+            const tileUrl = await fetchPreviewTileUrl(imageId, true);
+            setVisibleLayerUrl(null);
+            setDifferenceLayerUrl(null);
+            setIsChangeLayerVisible(false);
+            setPreviewLayerUrl(tileUrl);
+        } catch (error: any) {
+            showNotification(error.message || "Erro ao carregar frame temporal.", "error");
+        }
+    }, [timelineImages, fetchPreviewTileUrl, showNotification]);
+
+    const handlePreviewImage = useCallback(async (imageId: string) => {
+        if (!activeAoi || !satellite) { showNotification("Defina uma AOI e selecione um satelite primeiro.", "error"); return; }
+        try {
+            const tileUrl = await fetchPreviewTileUrl(imageId, false);
+            setVisibleLayerUrl(null);
+            setDifferenceLayerUrl(null);
+            setIsChangeLayerVisible(false);
+            setPreviewLayerUrl(tileUrl);
+            const idx = timelineImages.findIndex((item) => item.id === imageId);
+            if (idx >= 0) setTimelineIndex(idx);
+        } catch (error: any) {
+            showNotification(error.message || "Erro ao carregar pre-visualizacao.", "error");
+        }
+    }, [activeAoi, satellite, showNotification, fetchPreviewTileUrl, timelineImages]);
+
+    const handleTimelineIndexChange = useCallback((index: number) => {
+        setTimelineIndex(index);
+        void showTimelineFrame(index);
+    }, [showTimelineFrame]);
+
+    const handleTimelinePlayToggle = useCallback(() => {
+        if (timelineImages.length < 2) {
+            showNotification('Selecione pelo menos 2 imagens para animacao temporal.', 'error');
+            return;
+        }
+        if (!activeAoi || !satellite) {
+            showNotification('Defina AOI e satelite para reproduzir timeline.', 'error');
+            return;
+        }
+        setTimelinePlaying((prev) => !prev);
+    }, [timelineImages.length, activeAoi, satellite, showNotification]);
+
+    const handleTimelineSpeedChange = useCallback((value: number) => {
+        setTimelineSpeedMs(value);
+    }, []);
+
+    useEffect(() => {
+        if (timelineIndex > Math.max(0, timelineImages.length - 1)) {
+            setTimelineIndex(0);
+        }
+        if (timelineImages.length < 2) {
+            setTimelinePlaying(false);
+        }
+    }, [timelineImages.length, timelineIndex]);
+
+    useEffect(() => {
+        if (!timelinePlaying || timelineImages.length < 2) return;
+        const timer = setInterval(() => {
+            setTimelineIndex((prev) => {
+                const next = (prev + 1) % timelineImages.length;
+                void showTimelineFrame(next);
+                return next;
+            });
+        }, timelineSpeedMs);
+        return () => clearInterval(timer);
+    }, [timelinePlaying, timelineImages.length, timelineSpeedMs, showTimelineFrame]);
 
     const handleDetectChange = useCallback(async () => {
         if (selectedImageIds.length !== 2) { showNotification("Selecione exatamente duas imagens para a detecção de mudança.", "error"); return; }
@@ -359,8 +576,10 @@ export default function MainApplication() {
     
     const handleCarouselSelect = useCallback((id: string) => {
         if (id === CHANGE_LAYER_ID) {
+            setTimelinePlaying(false);
             setIsChangeLayerVisible(prev => !prev);
         } else if (id.startsWith('index-')) {
+            setTimelinePlaying(false);
             const indexName = id.replace('index-', '');
             const selectedIndex = calculatedIndices.find(i => i.indexName === indexName);
             if (selectedIndex) {
@@ -371,7 +590,26 @@ export default function MainApplication() {
         }
     }, [calculatedIndices]);
 
-    const handleDeleteAoi = useCallback(() => { setActiveAoi(null); setApiImages([]); setSelectedImageIds([]); resetAnalysisLayers(); }, [resetAnalysisLayers]);
+    const handleDeleteAoi = useCallback(() => {
+        setActiveAoi(null);
+        setApiImages([]);
+        setSelectedImageIds([]);
+        setTimelineIndex(0);
+        setTimelinePlaying(false);
+        resetAnalysisLayers();
+    }, [resetAnalysisLayers]);
+
+    const handleSelectAllImages = useCallback(() => {
+        if (selectableImageIds.length === 0) return;
+        setSelectedImageIds(selectableImageIds);
+        setTimelineIndex(0);
+    }, [selectableImageIds]);
+
+    const handleDeselectAllImages = useCallback(() => {
+        setSelectedImageIds([]);
+        setTimelineIndex(0);
+        setTimelinePlaying(false);
+    }, []);
     const handleToggleTheme = useCallback(() => setTheme(t => t === 'light' ? 'dark' : 'light'), []);
 
     const handleStartCreation = useCallback(() => {
@@ -402,6 +640,438 @@ const handleSubmitProperty = useCallback(() => {
     setSelectedProperty(null);
 }, []);
 
+    const captureCurrentMapSnapshot = useCallback(async (): Promise<string | null> => {
+        try {
+            const mapElement = document.querySelector('.main-content .leaflet-container') as HTMLElement | null;
+            if (!mapElement) return null;
+
+            const html2canvas = await loadHtml2Canvas();
+            const canvas = await html2canvas(mapElement, {
+                useCORS: true,
+                allowTaint: false,
+                backgroundColor: '#ffffff',
+                scale: 1,
+                logging: false,
+            });
+            return canvas.toDataURL('image/png', 0.92);
+        } catch (error) {
+            console.error('Falha ao capturar screenshot do mapa:', error);
+            return null;
+        }
+    }, []);
+
+    const captureCurrentChartSnapshot = useCallback((): string | null => {
+        try {
+            const canvases = Array.from(document.querySelectorAll('.floating-panel-box .panel-body canvas')) as HTMLCanvasElement[];
+            if (!canvases.length) return null;
+
+            // Usa o maior canvas visivel para priorizar o grafico principal do painel de resultado.
+            const visibleCanvases = canvases.filter((c) => c.offsetWidth > 0 && c.offsetHeight > 0);
+            const target = (visibleCanvases.length ? visibleCanvases : canvases)
+                .sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+            if (!target) return null;
+
+            return target.toDataURL('image/png', 0.92);
+        } catch (error) {
+            console.error('Falha ao capturar screenshot do grafico:', error);
+            return null;
+        }
+    }, []);
+
+    const runAgronomistAnalysis = useCallback(async (payload: AgronomoPayload) => {
+        setAgronomoLoading(true);
+        setAgronomoError(null);
+        setAgronomoHistory([]);
+        setAgronomoComparison(null);
+        setAgronomoModalOpen(true);
+        setAgronomoPayloadSnapshot(payload);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/agronomo/relatorio`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Falha ao gerar relatorio do agronomo.');
+            }
+            const report = await response.json() as AgronomistReportData;
+            setAgronomoReport(report);
+
+            const [historyResp, comparisonResp] = await Promise.all([
+                fetch(`${API_BASE_URL}/api/agronomo/relatorios?talhao=${encodeURIComponent(payload.talhao)}&limit=5`),
+                fetch(`${API_BASE_URL}/api/agronomo/relatorio/${report.id}/comparar-anterior`),
+            ]);
+
+            if (historyResp.ok) {
+                const historyJson = await historyResp.json();
+                setAgronomoHistory(Array.isArray(historyJson.items) ? historyJson.items : []);
+            } else {
+                setAgronomoHistory([]);
+            }
+
+            if (comparisonResp.ok) {
+                const comparisonJson = await comparisonResp.json();
+                setAgronomoComparison(comparisonJson as AgronomoComparisonResponse);
+            } else {
+                setAgronomoComparison(null);
+            }
+        } catch (error: any) {
+            setAgronomoError(error.message || 'Erro ao consultar o agronomo virtual.');
+            showNotification(error.message || 'Erro ao consultar o agronomo virtual.', 'error');
+        } finally {
+            setAgronomoLoading(false);
+        }
+    }, [showNotification]);
+
+    const handleAskAgronomist = useCallback(async () => {
+        if (!changeAreas) {
+            showNotification('Execute a deteccao de mudanca antes de consultar o agronomo.', 'error');
+            return;
+        }
+
+        const total = Math.max(changeAreas.total, 0.0001);
+        const noChange = Math.max(0, total - changeAreas.gain - changeAreas.loss);
+        const valores = [changeAreas.gain, changeAreas.loss, noChange];
+        const min = Math.min(...valores);
+        const max = Math.max(...valores);
+        const media = valores.reduce((sum, v) => sum + v, 0) / valores.length;
+        const variacaoPercentual = ((changeAreas.gain - changeAreas.loss) / total) * 100;
+        const tendencia = variacaoPercentual < -8 ? 'queda' : variacaoPercentual > 8 ? 'alta' : 'estavel';
+
+        const payload = {
+            talhao: selectedProperty?.propriedade_nome || 'Talhao/AOI atual',
+            area_ha: Number(total.toFixed(4)),
+            indice: 'NDVI',
+            periodo: {
+                inicio: dateFrom,
+                fim: dateTo,
+            },
+            valores_temporais: [
+                { data: 'ganho_vegetacao', valor: Number(changeAreas.gain.toFixed(4)) },
+                { data: 'perda_vegetacao', valor: Number(changeAreas.loss.toFixed(4)) },
+                { data: 'sem_mudanca', valor: Number(noChange.toFixed(4)) },
+            ],
+            estatisticas: {
+                min: Number(min.toFixed(4)),
+                max: Number(max.toFixed(4)),
+                media: Number(media.toFixed(4)),
+                tendencia,
+                variacao_percentual: Number(variacaoPercentual.toFixed(4)),
+            },
+            data_pico_vegetativo: null,
+            data_queda_brusca: null,
+        };
+
+        await runAgronomistAnalysis(payload);
+    }, [changeAreas, selectedProperty, dateFrom, dateTo, showNotification, runAgronomistAnalysis]);
+
+    const handleAskAgronomistNdvi = useCallback(async () => {
+        if (!ndviAreas) {
+            showNotification('Execute o calculo NDVI antes de consultar o agronomo.', 'error');
+            return;
+        }
+
+        const values = [
+            Number(ndviAreas.area_agua || 0),
+            Number(ndviAreas.area_solo_exposto || 0),
+            Number(ndviAreas.area_vegetacao_rala || 0),
+            Number(ndviAreas.area_vegetacao_densa || 0),
+        ];
+        const total = Math.max(values.reduce((sum, v) => sum + v, 0), 0.0001);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const media = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const variacaoPercentual = ((ndviAreas.area_vegetacao_densa - ndviAreas.area_solo_exposto) / total) * 100;
+        const tendencia = variacaoPercentual < -8 ? 'queda' : variacaoPercentual > 8 ? 'alta' : 'estavel';
+        const denseRatio = ndviAreas.area_vegetacao_densa / total;
+        const stressRatio = (ndviAreas.area_solo_exposto + ndviAreas.area_agua) / total;
+
+        const payload = {
+            talhao: selectedProperty?.propriedade_nome || 'Talhao/AOI atual',
+            area_ha: Number(total.toFixed(4)),
+            indice: 'NDVI',
+            periodo: {
+                inicio: dateFrom,
+                fim: dateTo,
+            },
+            valores_temporais: [
+                { data: 'agua', valor: Number(ndviAreas.area_agua.toFixed(4)) },
+                { data: 'solo_exposto', valor: Number(ndviAreas.area_solo_exposto.toFixed(4)) },
+                { data: 'vegetacao_rala', valor: Number(ndviAreas.area_vegetacao_rala.toFixed(4)) },
+                { data: 'vegetacao_densa', valor: Number(ndviAreas.area_vegetacao_densa.toFixed(4)) },
+            ],
+            estatisticas: {
+                min: Number(min.toFixed(4)),
+                max: Number(max.toFixed(4)),
+                media: Number(media.toFixed(4)),
+                tendencia,
+                variacao_percentual: Number(variacaoPercentual.toFixed(4)),
+            },
+            data_pico_vegetativo: denseRatio >= 0.5 ? dateTo : null,
+            data_queda_brusca: stressRatio >= 0.35 ? dateTo : null,
+        };
+
+        await runAgronomistAnalysis(payload);
+    }, [ndviAreas, selectedProperty, dateFrom, dateTo, showNotification, runAgronomistAnalysis]);
+
+    const handleAskAgronomistNdre = useCallback(async () => {
+        if (!ndreResult) {
+            showNotification('Execute o calculo Red-Edge NDVI antes de consultar o agronomo.', 'error');
+            return;
+        }
+
+        const values = [
+            Number(ndreResult.area_nao_vegetada || 0),
+            Number(ndreResult.area_vegetacao_estressada || 0),
+            Number(ndreResult.area_vegetacao_moderada || 0),
+            Number(ndreResult.area_vegetacao_densa || 0),
+        ];
+        const total = Math.max(values.reduce((sum, v) => sum + v, 0), 0.0001);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const media = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const variacaoPercentual =
+            ((ndreResult.area_vegetacao_densa - ndreResult.area_vegetacao_estressada) / total) * 100;
+        const tendencia = variacaoPercentual < -8 ? 'queda' : variacaoPercentual > 8 ? 'alta' : 'estavel';
+        const denseRatio = ndreResult.area_vegetacao_densa / total;
+        const stressRatio = (ndreResult.area_vegetacao_estressada + ndreResult.area_nao_vegetada) / total;
+
+        const payload = {
+            talhao: selectedProperty?.propriedade_nome || 'Talhao/AOI atual',
+            area_ha: Number(total.toFixed(4)),
+            indice: 'RED-EDGE NDVI',
+            periodo: {
+                inicio: dateFrom,
+                fim: dateTo,
+            },
+            valores_temporais: [
+                { data: 'nao_vegetado', valor: Number(ndreResult.area_nao_vegetada.toFixed(4)) },
+                { data: 'vegetacao_estressada', valor: Number(ndreResult.area_vegetacao_estressada.toFixed(4)) },
+                { data: 'vegetacao_moderada', valor: Number(ndreResult.area_vegetacao_moderada.toFixed(4)) },
+                { data: 'vegetacao_densa', valor: Number(ndreResult.area_vegetacao_densa.toFixed(4)) },
+            ],
+            estatisticas: {
+                min: Number(min.toFixed(4)),
+                max: Number(max.toFixed(4)),
+                media: Number(media.toFixed(4)),
+                tendencia,
+                variacao_percentual: Number(variacaoPercentual.toFixed(4)),
+            },
+            data_pico_vegetativo: denseRatio >= 0.55 ? dateTo : null,
+            data_queda_brusca: stressRatio >= 0.35 ? dateTo : null,
+        };
+
+        await runAgronomistAnalysis(payload);
+    }, [ndreResult, selectedProperty, dateFrom, dateTo, showNotification, runAgronomistAnalysis]);
+
+    const handleAskAgronomistSavi = useCallback(async () => {
+        if (!saviResult) {
+            showNotification('Execute o calculo SAVI antes de consultar o agronomo.', 'error');
+            return;
+        }
+
+        const values = [
+            Number(saviResult.area_agua_solo || 0),
+            Number(saviResult.area_vegetacao_esparsa || 0),
+            Number(saviResult.area_vegetacao_moderada || 0),
+            Number(saviResult.area_vegetacao_densa || 0),
+        ];
+        const total = Math.max(values.reduce((sum, v) => sum + v, 0), 0.0001);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const media = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const variacaoPercentual =
+            ((saviResult.area_vegetacao_densa - saviResult.area_agua_solo) / total) * 100;
+        const tendencia = variacaoPercentual < -8 ? 'queda' : variacaoPercentual > 8 ? 'alta' : 'estavel';
+        const denseRatio = saviResult.area_vegetacao_densa / total;
+        const stressRatio = (saviResult.area_agua_solo + saviResult.area_vegetacao_esparsa) / total;
+
+        const payload = {
+            talhao: selectedProperty?.propriedade_nome || 'Talhao/AOI atual',
+            area_ha: Number(total.toFixed(4)),
+            indice: 'SAVI',
+            periodo: { inicio: dateFrom, fim: dateTo },
+            valores_temporais: [
+                { data: 'agua_solo', valor: Number(saviResult.area_agua_solo.toFixed(4)) },
+                { data: 'vegetacao_esparsa', valor: Number(saviResult.area_vegetacao_esparsa.toFixed(4)) },
+                { data: 'vegetacao_moderada', valor: Number(saviResult.area_vegetacao_moderada.toFixed(4)) },
+                { data: 'vegetacao_densa', valor: Number(saviResult.area_vegetacao_densa.toFixed(4)) },
+            ],
+            estatisticas: {
+                min: Number(min.toFixed(4)),
+                max: Number(max.toFixed(4)),
+                media: Number(media.toFixed(4)),
+                tendencia,
+                variacao_percentual: Number(variacaoPercentual.toFixed(4)),
+            },
+            data_pico_vegetativo: denseRatio >= 0.5 ? dateTo : null,
+            data_queda_brusca: stressRatio >= 0.35 ? dateTo : null,
+        };
+
+        await runAgronomistAnalysis(payload);
+    }, [saviResult, selectedProperty, dateFrom, dateTo, showNotification, runAgronomistAnalysis]);
+
+    const handleAskAgronomistMsavi = useCallback(async () => {
+        if (!msaviResult) {
+            showNotification('Execute o calculo MSAVI antes de consultar o agronomo.', 'error');
+            return;
+        }
+
+        const values = [
+            Number(msaviResult.area_solo_exposto || 0),
+            Number(msaviResult.area_vegetacao_rala || 0),
+            Number(msaviResult.area_vegetacao_moderada || 0),
+            Number(msaviResult.area_vegetacao_densa || 0),
+        ];
+        const total = Math.max(values.reduce((sum, v) => sum + v, 0), 0.0001);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const media = values.reduce((sum, v) => sum + v, 0) / values.length;
+        const variacaoPercentual =
+            ((msaviResult.area_vegetacao_densa - msaviResult.area_solo_exposto) / total) * 100;
+        const tendencia = variacaoPercentual < -8 ? 'queda' : variacaoPercentual > 8 ? 'alta' : 'estavel';
+        const denseRatio = msaviResult.area_vegetacao_densa / total;
+        const stressRatio = (msaviResult.area_solo_exposto + msaviResult.area_vegetacao_rala) / total;
+
+        const payload = {
+            talhao: selectedProperty?.propriedade_nome || 'Talhao/AOI atual',
+            area_ha: Number(total.toFixed(4)),
+            indice: 'MSAVI',
+            periodo: { inicio: dateFrom, fim: dateTo },
+            valores_temporais: [
+                { data: 'solo_exposto', valor: Number(msaviResult.area_solo_exposto.toFixed(4)) },
+                { data: 'vegetacao_rala', valor: Number(msaviResult.area_vegetacao_rala.toFixed(4)) },
+                { data: 'vegetacao_moderada', valor: Number(msaviResult.area_vegetacao_moderada.toFixed(4)) },
+                { data: 'vegetacao_densa', valor: Number(msaviResult.area_vegetacao_densa.toFixed(4)) },
+            ],
+            estatisticas: {
+                min: Number(min.toFixed(4)),
+                max: Number(max.toFixed(4)),
+                media: Number(media.toFixed(4)),
+                tendencia,
+                variacao_percentual: Number(variacaoPercentual.toFixed(4)),
+            },
+            data_pico_vegetativo: denseRatio >= 0.5 ? dateTo : null,
+            data_queda_brusca: stressRatio >= 0.35 ? dateTo : null,
+        };
+
+        await runAgronomistAnalysis(payload);
+    }, [msaviResult, selectedProperty, dateFrom, dateTo, showNotification, runAgronomistAnalysis]);
+
+    const handleExportAgronomoPdf = useCallback(async () => {
+        if (!agronomoReport) return;
+        const mapSnapshot = await captureCurrentMapSnapshot();
+        const chartSnapshot = captureCurrentChartSnapshot();
+        const histogramSnapshot = buildHistogramSvgDataUri(agronomoPayloadSnapshot);
+        const periodoLegenda = agronomoPayloadSnapshot
+            ? `${agronomoPayloadSnapshot.periodo.inicio} a ${agronomoPayloadSnapshot.periodo.fim}`
+            : `${dateFrom} a ${dateTo}`;
+        const logoUrl = `${window.location.origin}/logo-campos-conectados.svg`;
+        const html = `
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Relatorio Tecnico do Agronomo</title>
+    <style>
+      @page { size: A4; margin: 14mm; }
+      * { box-sizing: border-box; }
+      body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; color: #1d2939; background: #f6f8fb; }
+      .sheet { max-width: 920px; margin: 0 auto; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; padding: 18px 20px; }
+      .topline { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid #eef1f5; padding-bottom: 12px; }
+      .brand { display: flex; align-items: center; gap: 10px; }
+      .brand img { width: 46px; height: 46px; object-fit: contain; border-radius: 8px; }
+      .title-block h1 { margin: 0; font-size: 20px; letter-spacing: 0.2px; }
+      .subtitle { margin: 3px 0 0 0; color: #667085; font-size: 12px; }
+      .meta-wrap { text-align: right; font-size: 12px; color: #475467; line-height: 1.6; }
+      .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-weight: 700; text-transform: uppercase; font-size: 10px; background: #eef2ff; color: #344054; }
+      .visual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 14px; }
+      .card { border: 1px solid #d8dee8; border-radius: 8px; overflow: hidden; background: #fbfcfe; }
+      .card h3 { margin: 0; padding: 8px 10px; font-size: 13px; border-bottom: 1px solid #e7ecf3; color: #344054; background: #f8fafc; }
+      .card-media { height: 210px; display: flex; align-items: center; justify-content: center; background: #fff; }
+      .card-media img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+      .fallback { padding: 10px; font-size: 11px; color: #667085; }
+      .legend { margin: 6px 0 0 0; font-size: 11px; color: #667085; }
+      .section { margin-top: 10px; }
+      .section h2 { margin: 0 0 6px 0; font-size: 14px; color: #101828; }
+      .section p { margin: 0; line-height: 1.5; font-size: 13px; color: #344054; }
+      @media print {
+        body { background: #fff; }
+        .sheet { border: none; border-radius: 0; padding: 0; max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="topline">
+        <div class="brand">
+          <img src="${logoUrl}" alt="Campos Conectados" />
+          <div class="title-block">
+            <h1>Relatorio Tecnico do Agronomo</h1>
+            <p class="subtitle">Campos Conectados · Smart Farm Monitoring</p>
+          </div>
+        </div>
+        <div class="meta-wrap">
+          <div>Timestamp: ${new Date(agronomoReport.timestamp).toLocaleString('pt-BR')}</div>
+          <div>Nivel de atencao: <span class="badge">${agronomoReport.nivel_atencao}</span></div>
+        </div>
+      </div>
+
+      <div class="visual-grid">
+        <div class="card">
+          <h3>Grafico da Analise</h3>
+          <div class="card-media">
+            ${
+              chartSnapshot
+                ? `<img src="${chartSnapshot}" alt="Print do grafico da analise" />`
+                : `<div class="fallback">Nao foi possivel capturar o grafico automaticamente.</div>`
+            }
+          </div>
+        </div>
+        <div class="card">
+          <h3>Mapa da Analise</h3>
+          <div class="card-media">
+            ${
+              mapSnapshot
+                ? `<img src="${mapSnapshot}" alt="Print do mapa da analise" />`
+                : `<div class="fallback">Nao foi possivel capturar o mapa automaticamente neste navegador/camada base.</div>`
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 10px;">
+        <h3>Histograma de Variacao do Indice</h3>
+        <div class="card-media" style="height: 230px;">
+          ${
+            histogramSnapshot
+              ? `<img src="${histogramSnapshot}" alt="Histograma de variacao do indice" />`
+              : `<div class="fallback">Nao foi possivel gerar o histograma automaticamente.</div>`
+          }
+        </div>
+        <p class="legend">Intervalo analisado: ${periodoLegenda}</p>
+      </div>
+
+      <div class="section"><h2>1. Resumo da situacao</h2><p>${agronomoReport.resumo}</p></div>
+      <div class="section"><h2>2. Diagnostico provavel</h2><p>${agronomoReport.diagnostico}</p></div>
+      <div class="section"><h2>3. Possiveis causas</h2><p>${agronomoReport.causas}</p></div>
+      <div class="section"><h2>4. Recomendacoes praticas</h2><p>${agronomoReport.recomendacoes}</p></div>
+    </div>
+  </body>
+</html>`;
+        const printWindow = window.open('', '_blank', 'width=980,height=760');
+        if (!printWindow) {
+            showNotification('Nao foi possivel abrir a janela de impressao.', 'error');
+            return;
+        }
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+    }, [agronomoReport, showNotification, captureCurrentMapSnapshot, captureCurrentChartSnapshot, agronomoPayloadSnapshot, dateFrom, dateTo]);
+
     const handleCloseNdviModal = useCallback(() => { setNdviAreas(null); }, []);
     const handleCloseSaviModal = useCallback(() => { setSaviResult(null); }, []);
     const handleCloseMsaviModal = useCallback(() => { setMsaviResult(null); }, []);
@@ -413,6 +1083,7 @@ const handleSubmitProperty = useCallback(() => {
 
     useEffect(() => {
         if (activeAoi && satellite) {
+            previewTileCacheRef.current = {};
             handleSearchImages(activeAoi.geometry);
         }
     }, [activeAoi, satellite, handleSearchImages]);
@@ -488,6 +1159,17 @@ const handleSubmitProperty = useCallback(() => {
                                 onSelect={handleCarouselSelect}
                                 onPreview={handlePreviewImage}
                                 activeLayerId={activeLayerId}
+                                timelineItems={timelineImages.map((img) => ({ id: img.id, date: img.date }))}
+                                timelineIndex={timelineIndex}
+                                timelinePlaying={timelinePlaying}
+                                timelineSpeedMs={timelineSpeedMs}
+                                onTimelineIndexChange={handleTimelineIndexChange}
+                                onTimelinePlayToggle={handleTimelinePlayToggle}
+                                onTimelineSpeedChange={handleTimelineSpeedChange}
+                                hasSelectableImages={selectableImageIds.length > 0}
+                                allSelectableSelected={allSelectableSelected}
+                                onSelectAllImages={handleSelectAllImages}
+                                onDeselectAllImages={handleDeselectAllImages}
                             />
                         )}
                     </main>
@@ -500,6 +1182,8 @@ const handleSubmitProperty = useCallback(() => {
                         totalArea={changeAreas.total}
                         onClose={() => setChangeAreas(null)}
                         initialPosition={{ x: 1090, y: 70 }}
+                        onAskAgronomist={handleAskAgronomist}
+                        isAskingAgronomist={agronomoLoading}
                     />
                 )}
                 
@@ -508,6 +1192,8 @@ const handleSubmitProperty = useCallback(() => {
                         data={ndviAreas}
                         onClose={handleCloseNdviModal}
                         initialPosition={{ x: 50, y: 70 }}
+                        onAskAgronomist={handleAskAgronomistNdvi}
+                        isAskingAgronomist={agronomoLoading}
                     />
                 )}
 
@@ -516,6 +1202,8 @@ const handleSubmitProperty = useCallback(() => {
                       data={saviResult}
                       onClose={handleCloseSaviModal}
                       initialPosition={{ x: 570, y: 70 }}
+                      onAskAgronomist={handleAskAgronomistSavi}
+                      isAskingAgronomist={agronomoLoading}
                     />
                 )}
                 
@@ -524,6 +1212,8 @@ const handleSubmitProperty = useCallback(() => {
                       data={msaviResult}
                       onClose={handleCloseMsaviModal}
                       initialPosition={{ x: 1090, y: 70 }}
+                      onAskAgronomist={handleAskAgronomistMsavi}
+                      isAskingAgronomist={agronomoLoading}
                     />
                 )}
 
@@ -532,9 +1222,37 @@ const handleSubmitProperty = useCallback(() => {
                       data={ndreResult}
                       onClose={handleCloseNdreModal}
                       initialPosition={{ x: 50, y: 120 }}
+                      onAskAgronomist={handleAskAgronomistNdre}
+                      isAskingAgronomist={agronomoLoading}
+                    />
+                )}
+
+                {agronomoModalOpen && (
+                    <AgronomistReportModal
+                        report={agronomoReport || {
+                            id: 0,
+                            timestamp: new Date().toISOString(),
+                            resumo: '',
+                            diagnostico: '',
+                            causas: '',
+                            recomendacoes: '',
+                            nivel_atencao: 'medio',
+                        }}
+                        loading={agronomoLoading}
+                        error={agronomoError}
+                        history={agronomoHistory}
+                        comparison={agronomoComparison}
+                        onClose={() => {
+                            setAgronomoModalOpen(false);
+                            setAgronomoReport(null);
+                            setAgronomoError(null);
+                        }}
+                        onExportPdf={handleExportAgronomoPdf}
                     />
                 )}
             </div>
         </MapStateProvider>
     );
 }
+
+

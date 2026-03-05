@@ -19,7 +19,7 @@ export default function SidebarClima({
       {/* O TÍTULO FOI REMOVIDO. O BOTÃO DE TEMA AGORA É O ÚNICO ELEMENTO. */}
       <div className="sidebar-header">
         <button onClick={onToggleTheme} title="Alternar Tema" className="theme-toggle-button">
-          {theme === 'light' ? '🌙' : '☀️'}
+          <img src="/logo.png" alt="Campos Conectados" className="theme-toggle-logo" />
         </button>
       </div>
 
@@ -44,3 +44,4 @@ export default function SidebarClima({
     </aside>
   );
 }
+

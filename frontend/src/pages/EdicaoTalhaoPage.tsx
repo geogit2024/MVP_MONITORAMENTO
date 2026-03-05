@@ -7,7 +7,7 @@ import './EdicaoTalhaoPage.css';
 const EdicaoTalhaoPage = () => {
   // Estados para controlar as propriedades (props) que o MapView espera receber.
   // Estes são exemplos para tornar o componente funcional.
-  const [baseMapKey, setBaseMapKey] = useState('satellite');
+  const [baseMapKey, setBaseMapKey] = useState('google_hybrid');
   const [activeAoi, setActiveAoi] = useState(null);
   const [mapViewTarget, setMapViewTarget] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);

@@ -5,9 +5,10 @@ import './InfoTool.css'; // Vamos criar este CSS a seguir
 interface InfoToolProps {
   onClick: () => void;
   isActive: boolean;
+  title?: string;
 }
 
-const InfoTool: React.FC<InfoToolProps> = ({ onClick, isActive }) => {
+const InfoTool: React.FC<InfoToolProps> = ({ onClick, isActive, title }) => {
   // O ícone de "informação" (SVG)
   const infoIcon = (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -25,7 +26,7 @@ const InfoTool: React.FC<InfoToolProps> = ({ onClick, isActive }) => {
       <button
         className={buttonClass}
         onClick={onClick}
-        title="Consultar informações da camada CAR (clique aqui e depois no mapa)"
+        title={title || "Consultar informações da camada (clique aqui e depois no mapa)"}
       >
         {infoIcon}
       </button>

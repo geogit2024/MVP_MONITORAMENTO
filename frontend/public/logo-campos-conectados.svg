@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="300" viewBox="0 0 320 300" role="img" aria-label="Campos Conectados">
+  <rect width="320" height="300" fill="#ffffff"/>
+  <g transform="translate(50,20)">
+    <ellipse cx="110" cy="72" rx="94" ry="52" fill="none" stroke="#9bc37a" stroke-width="6"/>
+    <ellipse cx="110" cy="72" rx="52" ry="94" fill="none" stroke="#9bc37a" stroke-width="6" transform="rotate(32 110 72)"/>
+    <ellipse cx="110" cy="72" rx="52" ry="94" fill="none" stroke="#9bc37a" stroke-width="6" transform="rotate(-32 110 72)"/>
+    <circle cx="34" cy="70" r="9" fill="#9bc37a"/>
+    <circle cx="188" cy="70" r="9" fill="#9bc37a"/>
+    <circle cx="79" cy="20" r="9" fill="#9bc37a"/>
+    <circle cx="142" cy="20" r="9" fill="#9bc37a"/>
+    <circle cx="110" cy="132" r="9" fill="#9bc37a"/>
+    <path d="M110 46 C88 54, 74 80, 74 104 C74 127, 92 144, 110 148 C128 144, 146 127, 146 104 C146 80, 132 54, 110 46 Z" fill="#9bc37a"/>
+    <path d="M110 62 L110 132 M110 78 L98 88 M110 92 L122 82 M110 106 L98 116 M110 118 L122 108" stroke="#7aad5f" stroke-width="4" fill="none" stroke-linecap="round"/>
+  </g>
+  <text x="160" y="240" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="700" fill="#234b3f">CAMPOS CONECTADOS</text>
+  <text x="160" y="274" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#2b2f31">Smart Farm Monitoring</text>
+</svg>
