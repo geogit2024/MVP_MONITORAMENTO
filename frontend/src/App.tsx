@@ -7,6 +7,7 @@ import MenuPage from './pages/MenuPage';
 import MainApplication from './MainApplication';
 import PropertyRegistrationPage from './pages/PropertyRegistrationPage';
 import ReservoirPanel from './pages/ReservoirPanel';
+import { MapModeProvider } from './modules/map3d/MapModeContext';
 
 /**
  * Componente de Rota Protegida.
@@ -58,7 +59,9 @@ export default function App() {
         path="/monitoramento" 
         element={
           <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <MainApplication />
+            <MapModeProvider>
+              <MainApplication />
+            </MapModeProvider>
           </ProtectedRoute>
         }
       />

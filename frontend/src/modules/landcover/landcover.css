@@ -1,0 +1,101 @@
+.landcover-panel {
+  margin-top: 20px;
+}
+
+.landcover-card {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.landcover-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.landcover-row {
+  display: flex;
+  gap: 8px;
+}
+
+.landcover-helper {
+  margin: 6px 0 8px;
+  font-size: 12px;
+}
+
+.landcover-class-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landcover-class-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px;
+  cursor: pointer;
+}
+
+.landcover-class-item.active {
+  border-color: #2f6fdd;
+  background: rgba(47, 111, 221, 0.16);
+}
+
+.landcover-class-id {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.landcover-remove-class {
+  border: none;
+  background: transparent;
+  color: #ff7f7f;
+  cursor: pointer;
+}
+
+.landcover-badge {
+  background: #2f6fdd;
+  color: #fff;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.landcover-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.landcover-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.landcover-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.landcover-chart-block {
+  margin-top: 8px;
+}
+
+.landcover-error {
+  color: #ff8d8d;
+  font-size: 12px;
+  margin: 0 0 8px;
+}

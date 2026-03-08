@@ -1,25 +1,38 @@
 ﻿import os
 import ee
-from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, status, File, UploadFile, Form, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 import asyncio
 from contextlib import asynccontextmanager
-import requests
+import httpx
+from urllib.parse import quote, urlparse
+
+try:
+    from routers.landcover import router as landcover_router
+except Exception:
+    from backend.routers.landcover import router as landcover_router
+
+try:
+    from services.landcover_service import refine_landcover
+except Exception:
+    from backend.services.landcover_service import refine_landcover
 
 # --------------------------------------------------------------------------
 # IMPORTAÃ‡Ã•ES PARA BANCO DE DADOS
 # --------------------------------------------------------------------------
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, DateTime, Text, text, select
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, DateTime, Text, text, select, func
 from sqlalchemy.engine import URL
 from geoalchemy2 import Geometry
 from geoalchemy2.functions import ST_AsGeoJSON
 from dotenv import load_dotenv
 from shapely.geometry import shape
 from shapely.ops import transform
+
 
 # --------------------------------------------------------------------------
 # INICIALIZAÃ‡ÃƒO E CONFIGURAÃ‡ÃƒO
@@ -150,6 +163,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.include_router(landcover_router)
 
 # --------------------------------------------------------------------------
 # MODELOS PYDANTIC (Estrutura de Dados da API)
@@ -320,6 +335,31 @@ class ReservoirDetails(BaseModel):
     description: Optional[str] = None
     geometry: Dict[str, Any]
 
+
+class RefineClass(BaseModel):
+    id: int
+    name: str
+    color: str
+
+
+class RefineClassificationRequest(BaseModel):
+    base_classification_id: Optional[str] = None
+    base_classification_asset: Optional[str] = None
+    source_aoi: Optional[Dict[str, Any]] = None
+    date_start: Optional[date] = None
+    date_end: Optional[date] = None
+    classes: Optional[List[RefineClass]] = None
+    refinement_polygon: Dict[str, Any]
+    new_training_samples: Dict[str, Any]
+
+
+class RefineClassificationResponse(BaseModel):
+    classification_id: str
+    tile_url: str
+    legend: List[Dict[str, Any]]
+    class_stats: List[Dict[str, Any]]
+    export_url: str
+
 # --------------------------------------------------------------------------
 # FUNÃ‡Ã•ES AUXILIARES E CONSTANTES DO GEE
 # --------------------------------------------------------------------------
@@ -328,7 +368,19 @@ SATELLITE_COLLECTIONS = {
     "LANDSAT_8": "LANDSAT/LC08/C02/T1_L2",
     "LANDSAT_9": "LANDSAT/LC09/C02/T1_L2",
     "SENTINEL_2A": "COPERNICUS/S2_SR_HARMONIZED",
-    "SENTINEL_2B": "COPERNICUS/S2_SR_HARMONIZED"
+    "SENTINEL_2B": "COPERNICUS/S2_SR_HARMONIZED",
+    "CBERS_4A_WFI": "CB4A-WFI-L2-DN-1",
+    "CBERS_4A_MUX": "CB4A-MUX-L2-DN-1",
+    "CBERS_4_PAN5M": "CB4-PAN5M-L2-DN-1",
+    "CBERS_4_PAN10M": "CB4-PAN10M-L2-DN-1",
+}
+
+CBERS_STAC_SEARCH_URL = "https://data.inpe.br/bdc/stac/v1/search"
+CBERS_STAC_COLLECTION_CANDIDATES = {
+    "CBERS_4A_WFI": ["CB4A-WFI-L2-DN-1", "CB4A-WFI-L4-DN-1"],
+    "CBERS_4A_MUX": ["CB4A-MUX-L2-DN-1", "CB4A-MUX-L4-DN-1"],
+    "CBERS_4_PAN5M": ["CB4-PAN5M-L2-DN-1", "CB4-PAN5M-L4-DN-1"],
+    "CBERS_4_PAN10M": ["CB4-PAN10M-L2-DN-1", "CB4-PAN10M-L4-DN-1"],
 }
 
 def create_ee_geometry_from_json(polygon_data: Dict[str, Any]) -> ee.Geometry:
@@ -1281,6 +1333,161 @@ async def get_property_by_id(property_id: int):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erro interno ao buscar propriedade.")
 
 # --------------------------------------------------------------------------
+# ENDPOINTS DE ANALISE 3D
+# --------------------------------------------------------------------------
+
+@app.get("/analysis/ndvi_3d", tags=["Analysis 3D"])
+async def get_ndvi_3d(bbox: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None):
+    try:
+        if date_from:
+            start_date = datetime.strptime(date_from, "%Y-%m-%d").date()
+        else:
+            start_date = date.today() - timedelta(days=45)
+
+        if date_to:
+            end_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+        else:
+            end_date = date.today()
+
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date_from deve ser menor ou igual a date_to.",
+            )
+
+        base_query = select(
+            talhoes.c.id,
+            talhoes.c.nome,
+            talhoes.c.area,
+            ST_AsGeoJSON(talhoes.c.geometry).label("geometry_geojson"),
+        )
+
+        if bbox:
+            try:
+                min_lng, min_lat, max_lng, max_lat = [float(value.strip()) for value in bbox.split(",")]
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="bbox invalida. Use: minLng,minLat,maxLng,maxLat",
+                )
+
+            if min_lng >= max_lng or min_lat >= max_lat:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="bbox invalida. Garanta min < max.",
+                )
+
+            envelope = func.ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+            base_query = base_query.where(func.ST_Intersects(talhoes.c.geometry, envelope))
+
+        with engine.connect() as connection:
+            rows = connection.execute(base_query).mappings().all()
+
+        if not rows:
+            return {"type": "FeatureCollection", "features": []}
+
+        features = []
+        for row in rows:
+            geometry_dict = json.loads(row["geometry_geojson"])
+            ee_geometry = create_ee_geometry_from_json(geometry_dict)
+
+            image_collection = (
+                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                .filterBounds(ee_geometry)
+                .filterDate(str(start_date), str(end_date))
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
+            )
+
+            ndvi_mean = 0.0
+            try:
+                composite = image_collection.median()
+                ndvi_image = calculate_indices_gee(composite, False, ["NDVI"]).get("NDVI")
+                if ndvi_image is not None:
+                    reduce_result = await asyncio.to_thread(
+                        ndvi_image.reduceRegion(
+                            reducer=ee.Reducer.mean(),
+                            geometry=ee_geometry,
+                            scale=10,
+                            maxPixels=1e10,
+                        ).getInfo
+                    )
+                    ndvi_mean = float((reduce_result or {}).get("NDVI") or 0.0)
+            except Exception as ndvi_error:
+                print(f"Aviso: falha ao calcular NDVI 3D para talhao {row['id']}: {ndvi_error}")
+
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": geometry_dict,
+                    "properties": {
+                        "id": row["id"],
+                        "nome": row["nome"],
+                        "ndvi_mean": ndvi_mean,
+                        "area": float(row["area"] or 0.0),
+                        "date": str(end_date),
+                    },
+                }
+            )
+
+        return {"type": "FeatureCollection", "features": features}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Erro ao gerar analysis/ndvi_3d: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao gerar NDVI 3D: {e}",
+        )
+
+@app.get("/analysis/dem", tags=["Analysis 3D"])
+async def get_dem_tiles(bbox: Optional[str] = None):
+    try:
+        dem_image = ee.Image("USGS/SRTMGL1_003")
+        geometry = None
+
+        if bbox:
+            try:
+                min_lng, min_lat, max_lng, max_lat = [float(value.strip()) for value in bbox.split(",")]
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="bbox invalida. Use: minLng,minLat,maxLng,maxLat",
+                )
+
+            if min_lng >= max_lng or min_lat >= max_lat:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="bbox invalida. Garanta min < max.",
+                )
+
+            geometry = ee.Geometry.Rectangle([min_lng, min_lat, max_lng, max_lat], proj="EPSG:4326")
+            dem_image = dem_image.clip(geometry)
+
+        vis_params = {
+            "min": 0,
+            "max": 3000,
+            "palette": ["#0b3d2e", "#4f772d", "#90a955", "#dda15e", "#f4a261", "#e9c46a", "#fefae0"],
+        }
+
+        map_id = await asyncio.to_thread(dem_image.visualize(**vis_params).getMapId)
+        response: Dict[str, Any] = {
+            "tileUrl": map_id["tile_fetcher"].url_format,
+            "source": "USGS/SRTMGL1_003",
+        }
+        if bbox:
+            response["bbox"] = bbox
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Erro ao gerar analysis/dem: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro interno ao gerar DEM: {e}",
+        )
+
+
+# --------------------------------------------------------------------------
 # ENDPOINTS PARA RESERVATÃ“RIOS
 # --------------------------------------------------------------------------
 
@@ -1394,57 +1601,275 @@ async def delete_reservoir(reservoir_id: int):
 @app.post("/api/earth-images/search", response_model=List[ImageInfo], tags=["Google Earth Engine"])
 async def search_earth_images(request: SearchRequest):
     try:
-        geometry = create_ee_geometry_from_json(request.polygon)
         collection_name = SATELLITE_COLLECTIONS.get(request.satellite)
         if not collection_name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SatÃ©lite invÃ¡lido.")
-        is_landsat = "LANDSAT" in request.satellite
-        cloud_property = 'CLOUD_COVER' if is_landsat else 'CLOUDY_PIXEL_PERCENTAGE'
-        image_collection = (
-            ee.ImageCollection(collection_name)
-            .filterBounds(geometry)
-            .filterDate(str(request.dateFrom), str(request.dateTo))
-            .filter(ee.Filter.lt(cloud_property, request.cloudPct))
-            .sort('system:time_start')
-        )
-        images_info_result = await asyncio.to_thread(image_collection.getInfo)
-        images_list_info = images_info_result['features']
         
-        if not images_list_info:
-            return []
-        
-        results = []
-        vis_params_rgb = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
-        for img_info in images_list_info:
-            image_id = img_info['id']
-            image = ee.Image(image_id)
-            scaled_image = get_image_bands(image, is_landsat)
-            dt = date.fromtimestamp(img_info['properties']['system:time_start'] / 1000)
+        if request.satellite.startswith("CBERS"):
+            # --- Lógica para CBERS via STAC (INPE) ---
+            try:
+                geom_shape = shape(request.polygon)
+                bounds = geom_shape.bounds # (minx, miny, maxx, maxy)
+                
+                stac_url = os.getenv("BDC_STAC_SEARCH_URL", CBERS_STAC_SEARCH_URL).strip()
+                candidate_collections = CBERS_STAC_COLLECTION_CANDIDATES.get(request.satellite, [collection_name])
+
+                base_payload = {
+                    "bbox": list(bounds),
+                    "datetime": f"{request.dateFrom.isoformat()}T00:00:00Z/{request.dateTo.isoformat()}T23:59:59Z",
+                    "limit": 100
+                }
+                
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "WebGIS-MVP/1.0",
+                    "Accept": "application/json, application/geo+json"
+                }
+                
+                features = []
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    for candidate_collection in candidate_collections:
+                        payload = {**base_payload, "collections": [candidate_collection]}
+                        response = None
+                        last_exception = None
+                        for attempt in range(3):
+                            try:
+                                response = await client.post(stac_url, json=payload, headers=headers)
+                                response.raise_for_status()
+                                break
+                            except httpx.HTTPStatusError as e:
+                                last_exception = e
+                                if attempt < 2:
+                                    await asyncio.sleep(1)
+                            except httpx.RequestError as e:
+                                last_exception = e
+                                if attempt < 2:
+                                    await asyncio.sleep(1)
+
+                        if response is None:
+                            continue
+
+                        try:
+                            data = response.json()
+                        except json.JSONDecodeError:
+                            data = {}
+
+                        current_features = data.get("features", [])
+                        if current_features:
+                            features = current_features
+                            break
+
+                        if last_exception and attempt == 2:
+                            print(f"Aviso STAC ({candidate_collection}): {last_exception}")
+
+                if not features:
+                    return []
+                results = []
+                
+                for feat in features:
+                    props = feat.get("properties", {})
+                    assets = feat.get("assets", {})
+                    
+                    # O campo de nuvens pode vir vazio em algumas coleções CBERS.
+                    raw_cloud_cover = props.get("eo:cloud_cover")
+                    if raw_cloud_cover in (None, ""):
+                        raw_cloud_cover = props.get("cloud_cover")
+                    cloud_cover = None
+                    if raw_cloud_cover not in (None, ""):
+                        try:
+                            cloud_cover = float(raw_cloud_cover)
+                        except (TypeError, ValueError):
+                            cloud_cover = None
+
+                    if cloud_cover is not None and cloud_cover > request.cloudPct:
+                        continue
+
+                    dt_str = props.get("datetime", "")
+                    try:
+                        # Tenta formatar a data ISO
+                        dt_obj = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                        date_formatted = dt_obj.strftime('%d/%m/%Y')
+                    except Exception:
+                        date_formatted = dt_str
+
+                    thumbnail_url = assets.get("thumbnail", {}).get("href", "")
+                    if not thumbnail_url:
+                        thumbnail_url = assets.get("quicklook", {}).get("href", "")
+                    if not thumbnail_url:
+                        thumbnail_url = assets.get("preview", {}).get("href", "")
+                    
+                    results.append(ImageInfo(
+                        id=feat["id"],
+                        date=date_formatted,
+                        thumbnailUrl=thumbnail_url
+                    ))
+                return results
+
+            except httpx.HTTPError as re:
+                error_detail = f"Erro de conexão ao consultar API STAC do INPE: {str(re)}"
+                if hasattr(re, 'response') and re.response is not None:
+                    error_detail += f" | Status: {re.response.status_code} | Body: {re.response.text[:200]}"
+                print(f"❌ {error_detail}")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=error_detail)
             
-            # Miniaturas maiores e sem compressao com perdas para reduzir pixelizacao no carrossel.
-            thumbnail_url = await asyncio.to_thread(scaled_image.visualize(**vis_params_rgb).getThumbURL, {
-                'dimensions': 640,
-                'region': geometry.bounds(),
-                'format': 'png'
-            })
-            results.append(ImageInfo(
-                id=image_id,
-                date=dt.strftime('%d/%m/%Y'),
-                thumbnailUrl=thumbnail_url
-            ))
-        return results
+        else:
+            # --- Lógica Existente para Landsat/Sentinel via GEE ---
+            geometry = create_ee_geometry_from_json(request.polygon)
+            is_landsat = "LANDSAT" in request.satellite
+            cloud_property = 'CLOUD_COVER' if is_landsat else 'CLOUDY_PIXEL_PERCENTAGE'
+            image_collection = (
+                ee.ImageCollection(collection_name)
+                .filterBounds(geometry)
+                .filterDate(str(request.dateFrom), str(request.dateTo))
+                .filter(ee.Filter.lt(cloud_property, request.cloudPct))
+                .sort('system:time_start')
+            )
+            images_info_result = await asyncio.to_thread(image_collection.getInfo)
+            images_list_info = images_info_result['features']
+            
+            if not images_list_info:
+                return []
+            
+            results = []
+            vis_params_rgb = {'bands': ['SR_B4', 'SR_B3', 'SR_B2'] if is_landsat else ['B4', 'B3', 'B2'], 'min': 0.0, 'max': 0.3}
+            for img_info in images_list_info:
+                image_id = img_info['id']
+                image = ee.Image(image_id)
+                scaled_image = get_image_bands(image, is_landsat)
+                dt = date.fromtimestamp(img_info['properties']['system:time_start'] / 1000)
+                
+                # Miniaturas maiores e sem compressao com perdas para reduzir pixelizacao no carrossel.
+                thumbnail_url = await asyncio.to_thread(scaled_image.visualize(**vis_params_rgb).getThumbURL, {
+                    'dimensions': 640,
+                    'region': geometry.bounds(),
+                    'format': 'png'
+                })
+                results.append(ImageInfo(
+                    id=image_id,
+                    date=dt.strftime('%d/%m/%Y'),
+                    thumbnailUrl=thumbnail_url
+                ))
+            return results
     except asyncio.CancelledError:
         print(f"âš ï¸  RequisiÃ§Ã£o para {request.satellite} (busca de imagens) foi cancelada pelo cliente ou timeout.")
         raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisiÃ§Ã£o foi cancelada ou excedeu o tempo limite.")
+    except HTTPException:
+        raise
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         print(f"âŒ Erro inesperado na busca de imagens: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Ocorreu um erro interno: {e}")
 
-@app.post("/api/earth-images/preview", tags=["Google Earth Engine"])
-async def get_image_preview_layer(request: ImagePreviewRequest):
+
+@app.post(
+    "/api/earth-images/refine-classification",
+    response_model=RefineClassificationResponse,
+    tags=["Google Earth Engine"],
+)
+async def refine_classification(request: RefineClassificationRequest):
+    """
+    Reclassifica apenas refinement_polygon e mescla sobre a classificacao base.
+    Suporta:
+    - base_classification_id (cache interno do modulo LULC)
+    - base_classification_asset + source_aoi/date_start/date_end
+    """
     try:
+        refined = refine_landcover(
+            base_classification_id=request.base_classification_id,
+            base_classification_asset=request.base_classification_asset,
+            refinement_polygon_geojson=request.refinement_polygon,
+            new_training_samples_fc=request.new_training_samples,
+            classes_input=[c.model_dump() for c in request.classes] if request.classes else None,
+            source_aoi_geojson=request.source_aoi,
+            date_start=request.date_start,
+            date_end=request.date_end,
+        )
+        return RefineClassificationResponse(
+            classification_id=refined.classification_id,
+            tile_url=refined.tile_url,
+            legend=refined.legend,
+            class_stats=refined.class_stats,
+            export_url=refined.download_url,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        safe_error = str(e).encode("ascii", "ignore").decode("ascii")
+        print(f"Erro ao refinar classificacao: {safe_error}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao refinar classificacao: {safe_error}",
+        )
+
+@app.post("/api/earth-images/preview", tags=["Google Earth Engine"])
+async def get_image_preview_layer(request: ImagePreviewRequest, http_request: Request):
+    try:
+        if request.satellite.startswith("CBERS"):
+            stac_url = os.getenv("BDC_STAC_SEARCH_URL", CBERS_STAC_SEARCH_URL).strip()
+            candidate_collections = CBERS_STAC_COLLECTION_CANDIDATES.get(
+                request.satellite,
+                [SATELLITE_COLLECTIONS.get(request.satellite, "")]
+            )
+            candidate_collections = [c for c in candidate_collections if c]
+
+            payload = {
+                "ids": [request.imageId],
+                "collections": candidate_collections,
+                "limit": 1,
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "WebGIS-MVP/1.0",
+                "Accept": "application/json, application/geo+json",
+            }
+
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                response = await client.post(stac_url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+
+            features = data.get("features", [])
+            if not features:
+                raise HTTPException(status_code=404, detail="Cena CBERS nao encontrada no STAC.")
+
+            feature = features[0]
+            assets = feature.get("assets", {})
+            image_overlay_url = (
+                assets.get("thumbnail", {}).get("href")
+                or assets.get("quicklook", {}).get("href")
+                or assets.get("preview", {}).get("href")
+                or ""
+            )
+
+            if not image_overlay_url:
+                raise HTTPException(status_code=404, detail="Cena CBERS sem miniatura para pre-visualizacao.")
+
+            bbox = feature.get("bbox")
+            if not bbox or len(bbox) < 4:
+                geometry_dict = feature.get("geometry")
+                if not geometry_dict:
+                    raise HTTPException(status_code=404, detail="Cena CBERS sem geometria/bbox para pre-visualizacao.")
+                geom_shape = shape(geometry_dict)
+                min_lng, min_lat, max_lng, max_lat = geom_shape.bounds
+            else:
+                min_lng, min_lat, max_lng, max_lat = bbox[:4]
+
+            parsed_source = urlparse(image_overlay_url)
+            allowed_hosts = {"data.inpe.br", "www.data.inpe.br"}
+            if parsed_source.scheme not in ("http", "https") or parsed_source.hostname not in allowed_hosts:
+                raise HTTPException(status_code=400, detail="URL de imagem CBERS invalida para proxy.")
+
+            encoded_source = quote(image_overlay_url, safe="")
+            proxy_url = f"{str(http_request.base_url).rstrip('/')}/api/earth-images/cbers-preview-image?source={encoded_source}"
+
+            # Leaflet bounds format: [[south, west], [north, east]]
+            overlay_bounds = [[min_lat, min_lng], [max_lat, max_lng]]
+            return {
+                "imageOverlayUrl": proxy_url,
+                "imageOverlayBounds": overlay_bounds,
+            }
+
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
         is_landsat = "LANDSAT" in request.satellite
@@ -1455,15 +1880,48 @@ async def get_image_preview_layer(request: ImagePreviewRequest):
         map_id = await asyncio.to_thread(visualized_image.getMapId)
         return {"tileUrl": map_id['tile_fetcher'].url_format}
     except asyncio.CancelledError:
-        print("âš ï¸  GeraÃ§Ã£o de preview cancelada.")
+        print("Aviso: geracao de preview cancelada.")
         raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT, detail="A requisiÃ§Ã£o foi cancelada ou excedeu o tempo limite.")
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"âŒ Erro ao gerar preview: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao gerar preview: {e}")
+        safe_error = str(e).encode("ascii", "ignore").decode("ascii")
+        print(f"Erro ao gerar preview: {safe_error}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erro ao gerar preview: {safe_error}")
+
+
+@app.get("/api/earth-images/cbers-preview-image", tags=["Google Earth Engine"])
+async def get_cbers_preview_image(source: str):
+    parsed = urlparse(source)
+    allowed_hosts = {"data.inpe.br", "www.data.inpe.br"}
+    if parsed.scheme not in ("http", "https") or parsed.hostname not in allowed_hosts:
+        raise HTTPException(status_code=400, detail="URL de origem invalida.")
+
+    try:
+        headers = {
+            "User-Agent": "WebGIS-MVP/1.0",
+            "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+        }
+        async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+            resp = await client.get(source, headers=headers)
+            resp.raise_for_status()
+
+        content_type = resp.headers.get("Content-Type", "image/png")
+        return Response(
+            content=resp.content,
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except httpx.HTTPError as e:
+        detail = str(e).encode("ascii", "ignore").decode("ascii")
+        raise HTTPException(status_code=502, detail=f"Falha ao baixar imagem CBERS: {detail}")
 
 @app.post("/api/earth-images/indices", response_model=IndicesResponse, tags=["Google Earth Engine"])
 async def generate_indices(request: IndicesRequest):
     try:
+        if request.satellite.startswith("CBERS"):
+            raise HTTPException(status_code=400, detail="O processamento avançado (NDVI, Índices) para o satélite CBERS estará disponível numa versão futura. Por favor, utilize Landsat ou Sentinel para estas análises.")
+
         if not request.indices:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A lista de Ã­ndices nÃ£o pode ser vazia.")
         
@@ -1537,6 +1995,9 @@ async def generate_indices(request: IndicesRequest):
 @app.post("/api/earth-images/change-detection", response_model=ChangeDetectionResponse, tags=["Google Earth Engine"])
 async def detect_changes(request: ChangeDetectionRequest):
     try:
+        if request.satellite.startswith("CBERS"):
+            raise HTTPException(status_code=400, detail="O processamento avançado (Detecção de Mudanças) para o satélite CBERS estará disponível numa versão futura. Por favor, utilize Landsat ou Sentinel para estas análises.")
+
         before_image = ee.Image(request.beforeImageId)
         after_image = ee.Image(request.afterImageId)
         geometry = create_ee_geometry_from_json(request.polygon)
@@ -1629,6 +2090,11 @@ async def detect_changes(request: ChangeDetectionRequest):
 @app.post("/api/earth-images/download-info", response_model=DownloadInfoResponse, tags=["Google Earth Engine"])
 async def get_download_info(request: DownloadInfoRequest):
     try:
+        # Como não temos o satélite no request deste endpoint específico no código original,
+        # verificamos se o ID da imagem parece ser do CBERS (padrão do STAC INPE geralmente contém CBERS)
+        if "CBERS" in request.imageId.upper():
+             raise HTTPException(status_code=400, detail="O download direto (GeoTIFF) para o satélite CBERS via esta ferramenta estará disponível numa versão futura.")
+
         image = ee.Image(request.imageId)
         geometry = create_ee_geometry_from_json(request.polygon)
         clipped_image = image.clip(geometry)
@@ -1665,4 +2131,3 @@ async def get_precipitation_tile():
     except Exception as e:
         print(f"âŒ Erro ao gerar camada de precipitaÃ§Ã£o: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))   
-

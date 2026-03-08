@@ -55,3 +55,203 @@
     background-color: dodgerblue; /* Cor de destaque quando a ferramenta de swipe estiver ativa */
     box-shadow: 0 0 10px dodgerblue;
 }
+.aoi-area-label {
+    pointer-events: none;
+    background: transparent;
+    border: 0;
+}
+
+.aoi-area-label div {
+    background: rgba(0, 0, 0, 0.75);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    transform: translate(-50%, -50%);
+}
+
+.leaflet-interactive.aoi-swipe-outline {
+    pointer-events: none;
+}
+
+.map-view-shell {
+    position: relative;
+    height: 100%;
+    width: 100%;
+}
+
+.map-view-shell.is-swipe-active .leaflet-container {
+    outline: 1px solid rgba(31, 111, 235, 0.45);
+}
+
+.swipe-control-card {
+    width: 280px;
+    background: rgba(20, 25, 35, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    padding: 10px;
+    color: #f8fafc;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.swipe-control-card.is-enabled {
+    border-color: rgba(56, 189, 248, 0.8);
+}
+
+.swipe-control-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #93c5fd;
+}
+
+.swipe-control-title.draggable {
+    cursor: grab;
+    user-select: none;
+}
+
+.swipe-control-title.draggable:active {
+    cursor: grabbing;
+}
+
+.swipe-control-card label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-weight: 600;
+}
+
+.swipe-control-card select {
+    border-radius: 6px;
+    border: 1px solid #475569;
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+.swipe-control-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.swipe-control-actions button {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: #1f6feb;
+    color: #fff;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.swipe-control-actions button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.swipe-control-actions button.danger {
+    background: #be123c;
+}
+
+.swipe-control-note {
+    margin: 0;
+    color: #d1d5db;
+    line-height: 1.35;
+}
+
+.swipe-divider-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1300;
+    pointer-events: none;
+}
+
+.swipe-divider-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    transform: translateX(-12px);
+    pointer-events: auto;
+    cursor: col-resize;
+}
+
+.swipe-divider-line::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 2px;
+    border-left: 2px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 255, 255, 0.35);
+}
+
+.swipe-divider-line.reveal-left {
+}
+
+.swipe-divider-line.reveal-left::before {
+    border-left-color: rgba(110, 231, 183, 0.95);
+}
+
+.swipe-divider-line.reveal-right {
+}
+
+.swipe-divider-line.reveal-right::before {
+    border-left-color: rgba(125, 211, 252, 0.95);
+}
+
+.swipe-divider-handle {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.95);
+    background: rgba(15, 23, 42, 0.9);
+    box-shadow: 0 3px 9px rgba(0, 0, 0, 0.35);
+    cursor: col-resize;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+}
+
+.swipe-divider-handle-icon {
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: #e2e8f0;
+    user-select: none;
+}
+
+body.swipe-dragging,
+body.swipe-dragging * {
+    cursor: col-resize !important;
+    user-select: none !important;
+}
+
+body.swipe-panel-dragging,
+body.swipe-panel-dragging * {
+    user-select: none !important;
+}
+
+@media (max-width: 900px) {
+    .swipe-control-card {
+        width: min(88vw, 300px);
+    }
+}

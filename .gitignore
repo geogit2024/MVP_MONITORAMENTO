@@ -21,3 +21,23 @@ yarn-debug.log*
 .venv/
 backend/.venv/
 venv/
+
+# Build artifacts
+frontend/tsconfig.tsbuildinfo
+
+# Temporary investigation files
+temp_*.xml
+temp_*.js
+
+# Local backups/screenshots
+backups/
+imagens/
+
+# Accidental placeholder files
+backend/landcover.py
+backend/LandCoverPanel.css
+backend/LandCoverPanel.tsx
+frontend/src/landcover.py
+frontend/src/LandCoverPanel.css
+frontend/src/LandCoverPanel.tsx
+frontend/src/__init__.py

@@ -26,6 +26,7 @@ interface ImageCarouselProps {
   allSelectableSelected: boolean;
   onSelectAllImages: () => void;
   onDeselectAllImages: () => void;
+  onClose: () => void;
 }
 
 const ImageCarousel: React.FC<ImageCarouselProps> = ({
@@ -45,6 +46,7 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({
   allSelectableSelected,
   onSelectAllImages,
   onDeselectAllImages,
+  onClose,
 }) => {
   const timelineEnabled = timelineItems.length >= 2;
   const currentTimelineLabel = timelineItems[timelineIndex]?.date || '-';
@@ -63,6 +65,15 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({
 
   return (
     <div className="image-carousel">
+      <button
+        type="button"
+        className="carousel-close-btn"
+        onClick={onClose}
+        title="Fechar carrossel de imagens"
+        aria-label="Fechar carrossel de imagens"
+      >
+        ×
+      </button>
       <div className="image-carousel-track" ref={trackRef}>
         {images.map((img) => {
           const isActive = selectedIds.includes(img.id) || activeLayerId === img.id;

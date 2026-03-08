@@ -35,6 +35,7 @@ interface SidebarProps {
   onVisibleIndexChange: (url: string | null) => void;
   changeThreshold: number;
   onChangeThreshold: (value: number) => void;
+  landCoverContent?: React.ReactNode;
 }
 
 // Componente principal, mantendo todos os props originais
@@ -44,7 +45,7 @@ export default function SidebarTerritorial({
   onDetectChange, onBulkDownload, onToggleTheme, onAoiFileUpload, onDeleteAoi,
   onCalculateIndices, selectedIndices, onIndexChange,
   calculatedIndices, onVisibleIndexChange,
-  changeThreshold, onChangeThreshold
+  changeThreshold, onChangeThreshold, landCoverContent
 }: SidebarProps) {
   
   // Estado original
@@ -153,6 +154,7 @@ export default function SidebarTerritorial({
               <button onClick={onBulkDownload} disabled={isProcessing || selectionCount === 0} className="button button-secondary">{loadingState === 'downloading' ? 'Baixando…' : `Baixar Imagem(ns) (${selectionCount})`}</button>
             </div>
           </fieldset>
+          {landCoverContent}
         </div>
       </aside>
 

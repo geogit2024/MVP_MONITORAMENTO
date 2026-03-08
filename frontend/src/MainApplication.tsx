@@ -4,6 +4,7 @@ import { Feature, FeatureCollection } from 'geojson';
 import type { Property } from './components/SidebarCadastro';
 import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
+import SidebarResizeHandle from './components/SidebarResizeHandle';
 import MapView from './components/MapView';
 import ImageCarousel from './components/ImageCarousel';
 import NdviResultPanel from './components/NdviResultPanel';
@@ -13,6 +14,14 @@ import NdreResultPanel from './components/NdreResultPanel';
 import ChangeDetectionPanel from './components/ChangeDetectionPanel';
 import AgronomistReportModal, { type AgronomistReportData } from './components/AgronomistReportModal';
 import { MapStateProvider } from './context/MapStateContext';
+import Globe3D from './modules/map3d/Globe3D';
+import ModeToggle from './modules/map3d/ModeToggle';
+import { useMapMode } from './modules/map3d/MapModeContext';
+import LandCoverPanel from './modules/landcover/LandCoverPanel';
+import type { LandCoverClassifyResponse } from './modules/landcover/types';
+import { refineLandCoverClassification } from './modules/landcover/ClassificationLayer';
+import useResizableSidebar from './hooks/useResizableSidebar';
+import type { SwipeLayerDescriptor } from './modules/swipe/types';
 
 import './App.css';
 import togeojson from '@mapbox/togeojson';
@@ -102,12 +111,29 @@ interface AgronomoPayload {
 
 interface NotificationProps { message: string; type: 'error' | 'success'; onDismiss: () => void; }
 interface LoadingIndicatorProps { text: string; subtext: string; }
+type PreviewOverlay = { url: string; bounds: [[number, number], [number, number]] };
+type PreviewPayload = { tileUrl?: string; imageOverlayUrl?: string; imageOverlayBounds?: [[number, number], [number, number]] };
+type PreviewLayerData = { mode: 'tile'; url: string } | { mode: 'overlay'; url: string; bounds: [[number, number], [number, number]] };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const SATELLITES = ['LANDSAT_8', 'LANDSAT_9', 'SENTINEL_2A', 'SENTINEL_2B'];
+const SATELLITES = [
+    'LANDSAT_8',
+    'LANDSAT_9',
+    'SENTINEL_2A',
+    'SENTINEL_2B',
+    'CBERS_4A_WFI',
+    'CBERS_4A_MUX',
+    'CBERS_4_PAN5M',
+    'CBERS_4_PAN10M',
+];
 const CHANGE_LAYER_ID = 'change-detection-result';
 const CHANGE_LAYER_ICON_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='12 2 2 7 12 12 22 7 12 2'%3E%3C/polygon%3E%3Cpolyline points='2 17 12 22 22 17'%3E%3C/polyline%3E%3Cpolyline points='2 12 12 17 22 12'%3E%3C/polyline%3E%3C/svg%3E";
 const INDEX_LAYER_ICON_URI = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='3' y1='9' x2='21' y2='9'%3E%3C/line%3E%3Cline x1='9' y1='21' x2='9' y2='9'%3E%3C/line%3E%3C/svg%3E";
+const DEFAULT_SIDEBAR_WIDTH = 380;
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 720;
+const SIDEBAR_WIDTH_STORAGE_KEY = 'app.sidebar.width';
+const DESKTOP_SIDEBAR_BREAKPOINT = 900;
 
 const Notification: React.FC<NotificationProps> = ({ message, type, onDismiss }) => {
     if (!message) return null;
@@ -199,6 +225,7 @@ const buildHistogramSvgDataUri = (payload: AgronomoPayload | null): string | nul
 };
 
 export default function MainApplication() {
+    const { mode: mapMode } = useMapMode();
     const [activeModule, setActiveModule] = useState<'territorial' | 'clima'>('territorial');
     const [theme, setTheme] = useState<'light' | 'dark'>('dark');
     const [dateFrom, setDateFrom] = useState('2025-01-01');
@@ -209,13 +236,18 @@ export default function MainApplication() {
     const [carouselItems, setCarouselItems] = useState<ImageInfo[]>([]);
     const [loadingState, setLoadingState] = useState<'idle' | 'searching' | 'calculating' | 'detectingChange' | 'downloading' | 'loading_preview'>('idle');
     const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
+    const [isCarouselVisible, setIsCarouselVisible] = useState(true);
     const [timelineIndex, setTimelineIndex] = useState(0);
     const [timelinePlaying, setTimelinePlaying] = useState(false);
     const [timelineSpeedMs, setTimelineSpeedMs] = useState(1200);
+    const [terrainExaggeration, setTerrainExaggeration] = useState(1.5);
+    const [ndvi3dRefreshKey, setNdvi3dRefreshKey] = useState(0);
+    const [ndvi3dMeanFallback, setNdvi3dMeanFallback] = useState<number | null>(null);
     const [activeAoi, setActiveAoi] = useState<Feature | null>(null);
     const [calculatedIndices, setCalculatedIndices] = useState<IndexResult[]>([]);
     const [visibleLayerUrl, setVisibleLayerUrl] = useState<string | null>(null);
     const [previewLayerUrl, setPreviewLayerUrl] = useState<string | null>(null);
+    const [previewOverlay, setPreviewOverlay] = useState<PreviewOverlay | null>(null);
     const [changePolygons, setChangePolygons] = useState<Feature | null>(null);
     const [notification, setNotification] = useState<{ message: string, type: 'error' | 'success' } | null>(null);
     const [baseMapKey, setBaseMapKey] = useState<string>('google_hybrid');
@@ -243,7 +275,39 @@ export default function MainApplication() {
     const [agronomoComparison, setAgronomoComparison] = useState<AgronomoComparisonResponse | null>(null);
     const [agronomoModalOpen, setAgronomoModalOpen] = useState(false);
     const [agronomoPayloadSnapshot, setAgronomoPayloadSnapshot] = useState<AgronomoPayload | null>(null);
-    const previewTileCacheRef = useRef<Record<string, string>>({});
+    const [landCoverTrainingSamples, setLandCoverTrainingSamples] = useState<FeatureCollection>({
+        type: 'FeatureCollection',
+        features: [],
+    });
+    const [landCoverSelectedClassId, setLandCoverSelectedClassId] = useState<number>(1);
+    const [landCoverDrawingEnabled, setLandCoverDrawingEnabled] = useState(false);
+    const [landCoverLayerUrl, setLandCoverLayerUrl] = useState<string | null>(null);
+    const [landCoverLayerVisible, setLandCoverLayerVisible] = useState(true);
+    const [landCoverResult, setLandCoverResult] = useState<LandCoverClassifyResponse | null>(null);
+    const [landCoverLoading, setLandCoverLoading] = useState(false);
+    const [landCoverBaseClassificationId, setLandCoverBaseClassificationId] = useState<string | null>(null);
+    const [landCoverRefinementMode, setLandCoverRefinementMode] = useState(false);
+    const [landCoverRefinementPolygon, setLandCoverRefinementPolygon] = useState<Feature | null>(null);
+    const [landCoverRefinementSamples, setLandCoverRefinementSamples] = useState<FeatureCollection>({
+        type: 'FeatureCollection',
+        features: [],
+    });
+    const [landCoverDrawingRefinementZone, setLandCoverDrawingRefinementZone] = useState(false);
+    const [selectedCarouselSwipeLayers, setSelectedCarouselSwipeLayers] = useState<SwipeLayerDescriptor[]>([]);
+    const previewTileCacheRef = useRef<Record<string, PreviewLayerData>>({});
+    const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(
+        typeof window === 'undefined' ? true : window.innerWidth > DESKTOP_SIDEBAR_BREAKPOINT
+    );
+    const {
+        width: sidebarWidth,
+        isResizing: isSidebarResizing,
+        handleResizeStart: handleSidebarResizeStart,
+    } = useResizableSidebar({
+        defaultWidth: DEFAULT_SIDEBAR_WIDTH,
+        minWidth: MIN_SIDEBAR_WIDTH,
+        maxWidth: MAX_SIDEBAR_WIDTH,
+        storageKey: SIDEBAR_WIDTH_STORAGE_KEY,
+    });
 
     useEffect(() => {
         const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({ id: `index-${index.indexName}`, date: index.indexName, thumbnailUrl: INDEX_LAYER_ICON_URI }));
@@ -273,13 +337,22 @@ export default function MainApplication() {
         setVisibleLayerUrl(null);
         setChangePolygons(null);
         setPreviewLayerUrl(null);
+        setPreviewOverlay(null);
         setDifferenceLayerUrl(null);
         setIsChangeLayerVisible(false);
         setChangeAreas(null);
         setNdviAreas(null);
+        setNdvi3dMeanFallback(null);
         setSaviResult(null);
         setMsaviResult(null);
         setNdreResult(null);
+        setLandCoverLayerUrl(null);
+        setLandCoverResult(null);
+        setLandCoverBaseClassificationId(null);
+        setLandCoverRefinementMode(false);
+        setLandCoverRefinementPolygon(null);
+        setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
+        setLandCoverDrawingRefinementZone(false);
     }, []);
 
     const setAoiAndZoom = useCallback((feature: Feature) => {
@@ -298,6 +371,7 @@ export default function MainApplication() {
         if (!satellite) { showNotification('Selecione um satélite.', 'error'); return; }
         setLoadingState('searching');
         setSelectedImageIds([]);
+        setIsCarouselVisible(true);
         setTimelineIndex(0);
         setTimelinePlaying(false);
         resetAnalysisLayers();
@@ -356,9 +430,24 @@ export default function MainApplication() {
 
                 data.results.forEach(result => {
                     switch(result.indexName.toUpperCase()) {
-                        case 'NDVI':
-                            setNdviAreas(result.classification as NdviAreas || null);
+                        case 'NDVI': {
+                            const ndviClassification = (result.classification as NdviAreas) || null;
+                            setNdviAreas(ndviClassification);
+                            if (ndviClassification) {
+                                const agua = Number(ndviClassification.area_agua || 0);
+                                const solo = Number(ndviClassification.area_solo_exposto || 0);
+                                const rala = Number(ndviClassification.area_vegetacao_rala || 0);
+                                const densa = Number(ndviClassification.area_vegetacao_densa || 0);
+                                const total = Math.max(agua + solo + rala + densa, 0.0001);
+                                const ndviApprox =
+                                    (agua * 0.05 + solo * 0.2 + rala * 0.45 + densa * 0.78) / total;
+                                setNdvi3dMeanFallback(Number(ndviApprox.toFixed(4)));
+                                setNdvi3dRefreshKey((key) => key + 1);
+                            } else {
+                                setNdvi3dMeanFallback(null);
+                            }
                             break;
+                        }
                         case 'SAVI':
                             setSaviResult(result.classification as SaviAreas || null);
                             break;
@@ -384,7 +473,7 @@ export default function MainApplication() {
         }
     }, [selectedImageIds, satellite, activeAoi, selectedIndices, showNotification, resetAnalysisLayers]);
 
-    const fetchPreviewTileUrl = useCallback(async (imageId: string, silent = false): Promise<string> => {
+    const fetchPreviewTileUrl = useCallback(async (imageId: string, silent = false): Promise<PreviewLayerData> => {
         if (!activeAoi || !satellite) {
             throw new Error("Defina uma AOI e selecione um satelite primeiro.");
         }
@@ -399,10 +488,35 @@ export default function MainApplication() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry }),
             });
-            if (!res.ok) throw new Error("Falha ao carregar pre-visualizacao da imagem.");
-            const data = await res.json();
-            previewTileCacheRef.current[imageId] = data.tileUrl;
-            return data.tileUrl as string;
+            if (!res.ok) {
+                let backendDetail = '';
+                try {
+                    const err = await res.json();
+                    backendDetail = err?.detail || '';
+                } catch {
+                    backendDetail = '';
+                }
+                throw new Error(backendDetail || "Falha ao carregar pre-visualizacao da imagem.");
+            }
+            const data = await res.json() as PreviewPayload;
+
+            if (data.imageOverlayUrl && Array.isArray(data.imageOverlayBounds) && data.imageOverlayBounds.length === 2) {
+                const entry: PreviewLayerData = {
+                    mode: 'overlay',
+                    url: data.imageOverlayUrl,
+                    bounds: data.imageOverlayBounds,
+                };
+                previewTileCacheRef.current[imageId] = entry;
+                return entry;
+            }
+
+            if (!data.tileUrl) {
+                throw new Error('API de pre-visualizacao nao retornou tileUrl nem overlay.');
+            }
+
+            const entry: PreviewLayerData = { mode: 'tile', url: data.tileUrl };
+            previewTileCacheRef.current[imageId] = entry;
+            return entry;
         } finally {
             if (!silent) setLoadingState('idle');
         }
@@ -413,11 +527,17 @@ export default function MainApplication() {
         const safeIndex = Math.max(0, Math.min(frameIndex, timelineImages.length - 1));
         const imageId = timelineImages[safeIndex].id;
         try {
-            const tileUrl = await fetchPreviewTileUrl(imageId, true);
+            const previewData = await fetchPreviewTileUrl(imageId, true);
             setVisibleLayerUrl(null);
             setDifferenceLayerUrl(null);
             setIsChangeLayerVisible(false);
-            setPreviewLayerUrl(tileUrl);
+            if (previewData.mode === 'overlay') {
+                setPreviewLayerUrl(null);
+                setPreviewOverlay({ url: previewData.url, bounds: previewData.bounds });
+            } else {
+                setPreviewOverlay(null);
+                setPreviewLayerUrl(previewData.url);
+            }
         } catch (error: any) {
             showNotification(error.message || "Erro ao carregar frame temporal.", "error");
         }
@@ -426,11 +546,17 @@ export default function MainApplication() {
     const handlePreviewImage = useCallback(async (imageId: string) => {
         if (!activeAoi || !satellite) { showNotification("Defina uma AOI e selecione um satelite primeiro.", "error"); return; }
         try {
-            const tileUrl = await fetchPreviewTileUrl(imageId, false);
+            const previewData = await fetchPreviewTileUrl(imageId, false);
             setVisibleLayerUrl(null);
             setDifferenceLayerUrl(null);
             setIsChangeLayerVisible(false);
-            setPreviewLayerUrl(tileUrl);
+            if (previewData.mode === 'overlay') {
+                setPreviewLayerUrl(null);
+                setPreviewOverlay({ url: previewData.url, bounds: previewData.bounds });
+            } else {
+                setPreviewOverlay(null);
+                setPreviewLayerUrl(previewData.url);
+            }
             const idx = timelineImages.findIndex((item) => item.id === imageId);
             if (idx >= 0) setTimelineIndex(idx);
         } catch (error: any) {
@@ -458,6 +584,64 @@ export default function MainApplication() {
     const handleTimelineSpeedChange = useCallback((value: number) => {
         setTimelineSpeedMs(value);
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadSelectedSwipeLayers = async () => {
+            if (!activeAoi || !satellite || selectedImageIds.length === 0) {
+                setSelectedCarouselSwipeLayers([]);
+                return;
+            }
+
+            const selectedSet = new Set(selectedImageIds);
+            const selectedImages = apiImages.filter((img) => selectedSet.has(img.id));
+            if (selectedImages.length === 0) {
+                setSelectedCarouselSwipeLayers([]);
+                return;
+            }
+
+            const descriptors = await Promise.all(
+                selectedImages.map(async (img): Promise<SwipeLayerDescriptor | null> => {
+                    try {
+                        const preview = await fetchPreviewTileUrl(img.id, true);
+                        const label = `Imagem ${img.date}`;
+                        if (preview.mode === 'overlay') {
+                            return {
+                                id: `carousel-overlay-${img.id}`,
+                                label,
+                                kind: 'imageOverlay',
+                                url: preview.url,
+                                bounds: preview.bounds,
+                                zIndex: 15,
+                                opacity: 0.82,
+                            };
+                        }
+
+                        return {
+                            id: `carousel-tile-${img.id}`,
+                            label,
+                            kind: 'tile',
+                            url: preview.url,
+                            zIndex: 15,
+                            opacity: 0.8,
+                            attribution: 'Pre-visualizacao',
+                        };
+                    } catch {
+                        return null;
+                    }
+                })
+            );
+
+            if (cancelled) return;
+            setSelectedCarouselSwipeLayers(descriptors.filter((item): item is SwipeLayerDescriptor => Boolean(item)));
+        };
+
+        void loadSelectedSwipeLayers();
+        return () => {
+            cancelled = true;
+        };
+    }, [activeAoi, satellite, selectedImageIds, apiImages, fetchPreviewTileUrl]);
 
     useEffect(() => {
         if (timelineIndex > Math.max(0, timelineImages.length - 1)) {
@@ -573,6 +757,82 @@ export default function MainApplication() {
     }, [showNotification, setAoiAndZoom]);
 
     const handleDrawComplete = useCallback((feature: Feature) => setAoiAndZoom(feature), [setAoiAndZoom]);
+    const handleLandCoverSampleDrawComplete = useCallback((feature: Feature) => {
+        const sampleWithClass: Feature = {
+            ...feature,
+            properties: {
+                ...(feature.properties || {}),
+                class_id: landCoverSelectedClassId,
+            },
+        };
+        if (landCoverRefinementMode) {
+            setLandCoverRefinementSamples((prev) => ({
+                type: 'FeatureCollection',
+                features: [...prev.features, sampleWithClass],
+            }));
+            return;
+        }
+        setLandCoverTrainingSamples((prev) => ({
+            type: 'FeatureCollection',
+            features: [...prev.features, sampleWithClass],
+        }));
+    }, [landCoverSelectedClassId, landCoverRefinementMode]);
+
+    const handleLandCoverRefinementZoneDrawComplete = useCallback((feature: Feature) => {
+        setLandCoverRefinementPolygon(feature);
+        setLandCoverDrawingRefinementZone(false);
+    }, []);
+
+    const handleLandCoverResult = useCallback((result: LandCoverClassifyResponse) => {
+        setLandCoverResult(result);
+        setLandCoverLayerUrl(result.tile_url);
+        setLandCoverLayerVisible(true);
+        setLandCoverBaseClassificationId(result.classification_id);
+        setLandCoverRefinementMode(false);
+        showNotification('Classificacao de uso do solo concluida.', 'success');
+    }, [showNotification]);
+
+    const handleRefineLandCover = useCallback(async (refinementPolygon: Feature, refinementSamples: FeatureCollection) => {
+        if (!activeAoi) {
+            showNotification('Defina uma AOI antes do refinamento.', 'error');
+            return;
+        }
+        if (!landCoverBaseClassificationId) {
+            showNotification('Execute uma classificacao base antes de refinar.', 'error');
+            return;
+        }
+        try {
+            setLandCoverLoading(true);
+            const refined = await refineLandCoverClassification({
+                baseClassificationId: landCoverBaseClassificationId,
+                sourceAoiGeometry: activeAoi.geometry,
+                dateStart: dateFrom,
+                dateEnd: dateTo,
+                refinementPolygonGeometry: refinementPolygon.geometry,
+                newTrainingSamples: refinementSamples,
+            });
+            setLandCoverResult(refined);
+            setLandCoverLayerUrl(refined.tile_url);
+            setLandCoverLayerVisible(true);
+            setLandCoverBaseClassificationId(refined.classification_id);
+            setLandCoverRefinementMode(false);
+            setLandCoverRefinementPolygon(null);
+            setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
+            showNotification('Refinamento aplicado somente na area selecionada.', 'success');
+        } catch (error: any) {
+            showNotification(error.message || 'Falha ao refinar classificacao.', 'error');
+        } finally {
+            setLandCoverLoading(false);
+        }
+    }, [activeAoi, landCoverBaseClassificationId, dateFrom, dateTo, showNotification]);
+
+    const handleApplyRefinement = useCallback(async () => {
+        if (!landCoverRefinementPolygon) {
+            showNotification('Desenhe a zona de refinamento.', 'error');
+            return;
+        }
+        await handleRefineLandCover(landCoverRefinementPolygon, landCoverRefinementSamples);
+    }, [landCoverRefinementPolygon, landCoverRefinementSamples, handleRefineLandCover, showNotification]);
     
     const handleCarouselSelect = useCallback((id: string) => {
         if (id === CHANGE_LAYER_ID) {
@@ -594,8 +854,16 @@ export default function MainApplication() {
         setActiveAoi(null);
         setApiImages([]);
         setSelectedImageIds([]);
+        setIsCarouselVisible(true);
         setTimelineIndex(0);
         setTimelinePlaying(false);
+        setLandCoverTrainingSamples({ type: 'FeatureCollection', features: [] });
+        setLandCoverDrawingEnabled(false);
+        setLandCoverLayerVisible(true);
+        setLandCoverRefinementMode(false);
+        setLandCoverRefinementPolygon(null);
+        setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
+        setLandCoverDrawingRefinementZone(false);
         resetAnalysisLayers();
     }, [resetAnalysisLayers]);
 
@@ -1088,6 +1356,22 @@ const handleSubmitProperty = useCallback(() => {
         }
     }, [activeAoi, satellite, handleSearchImages]);
 
+    useEffect(() => {
+        const handleWindowResize = () => {
+            setIsDesktopLayout(window.innerWidth > DESKTOP_SIDEBAR_BREAKPOINT);
+        };
+        window.addEventListener('resize', handleWindowResize);
+        return () => window.removeEventListener('resize', handleWindowResize);
+    }, []);
+
+    useEffect(() => {
+        if (activeModule !== 'territorial' || mapMode !== '2d') return;
+        const rafId = window.requestAnimationFrame(() => {
+            window.dispatchEvent(new Event('resize'));
+        });
+        return () => window.cancelAnimationFrame(rafId);
+    }, [activeModule, isDesktopLayout, mapMode, sidebarWidth]);
+
     let activeLayerId = null;
     if (isChangeLayerVisible) {
         activeLayerId = CHANGE_LAYER_ID;
@@ -1113,46 +1397,146 @@ const handleSubmitProperty = useCallback(() => {
                 </div>
                 <div className="main-view">
                     {activeModule === 'territorial' ? (
-                        <SidebarTerritorial
-                            dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
-                            cloudPct={cloudPct} onCloudPctChange={setCloudPct}
-                            satellite={satellite}
-                            onSatelliteChange={(value) => {
-                                setSatellite(value);
-                                if (value.startsWith('LANDSAT') && selectedIndices.includes('Red-Edge NDVI')) {
-                                    setSelectedIndices(prev => prev.filter(i => i !== 'Red-Edge NDVI'));
+                        <div
+                            className="resizable-sidebar-shell"
+                            style={isDesktopLayout ? { width: `${sidebarWidth}px` } : undefined}
+                        >
+                            <SidebarTerritorial
+                                dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
+                                cloudPct={cloudPct} onCloudPctChange={setCloudPct}
+                                satellite={satellite}
+                                onSatelliteChange={(value) => {
+                                    setSatellite(value);
+                                    if (value.startsWith('LANDSAT') && selectedIndices.includes('Red-Edge NDVI')) {
+                                        setSelectedIndices(prev => prev.filter(i => i !== 'Red-Edge NDVI'));
+                                    }
+                                }}
+                                satellites={SATELLITES} theme={theme} loadingState={loadingState}
+                                selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
+                                onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
+                                onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
+                                onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
+                                calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
+                                changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
+                                landCoverContent={
+                                    <LandCoverPanel
+                                        aoi={activeAoi}
+                                        dateStart={dateFrom}
+                                        dateEnd={dateTo}
+                                        onDateStartChange={setDateFrom}
+                                        onDateEndChange={setDateTo}
+                                        trainingSamples={landCoverTrainingSamples}
+                                        onTrainingSamplesChange={setLandCoverTrainingSamples}
+                                        drawingEnabled={landCoverDrawingEnabled}
+                                        onToggleDrawing={() => setLandCoverDrawingEnabled((prev) => !prev)}
+                                        selectedClassId={landCoverSelectedClassId}
+                                        onSelectedClassIdChange={setLandCoverSelectedClassId}
+                                        onResult={handleLandCoverResult}
+                                        onToggleLayerVisible={() => setLandCoverLayerVisible((prev) => !prev)}
+                                        layerVisible={landCoverLayerVisible}
+                                        loading={loadingState !== 'idle' || landCoverLoading}
+                                        onLoadingChange={setLandCoverLoading}
+                                        refinementMode={landCoverRefinementMode}
+                                        hasBaseClassification={Boolean(landCoverBaseClassificationId)}
+                                        refinementZoneReady={Boolean(landCoverRefinementPolygon)}
+                                        refinementSampleCount={landCoverRefinementSamples.features.length}
+                                        onToggleRefinementMode={() =>
+                                            setLandCoverRefinementMode((prev) => {
+                                                const next = !prev;
+                                                if (!next) {
+                                                    setLandCoverDrawingRefinementZone(false);
+                                                }
+                                                return next;
+                                            })
+                                        }
+                                        onDrawRefinementZone={() => setLandCoverDrawingRefinementZone(true)}
+                                        onApplyRefinement={handleApplyRefinement}
+                                        onClearRefinement={() => {
+                                            setLandCoverRefinementPolygon(null);
+                                            setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
+                                            setLandCoverDrawingRefinementZone(false);
+                                        }}
+                                    />
                                 }
-                            }}
-                            satellites={SATELLITES} theme={theme} loadingState={loadingState}
-                            selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
-                            onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
-                            onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
-                            onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
-                            calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
-                            changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
-                        />
+                            />
+                            {isDesktopLayout && (
+                                <SidebarResizeHandle
+                                    onPointerDown={handleSidebarResizeStart}
+                                    isResizing={isSidebarResizing}
+                                />
+                            )}
+                        </div>
                     ) : (
                         <SidebarClima theme={theme} onToggleTheme={handleToggleTheme}/>
                     )}
                     <main className="main-content">
-                        <MapView
-                            onDrawComplete={handleDrawComplete}
-                            drawingEnabled={true}
-                            visibleLayerUrl={visibleLayerUrl}
-                            previewLayerUrl={previewLayerUrl} 
-                            activeAoi={activeAoi}
-                            changePolygons={isChangeLayerVisible ? changePolygons : null}
-                            baseMapKey={baseMapKey} onBaseMapChange={setBaseMapKey}
-                            mapViewTarget={mapViewTarget} 
-                            differenceLayerUrl={differenceLayerUrl}
-                            indexLayerZIndex={indexLayerZIndex} 
-                            differenceLayerZIndex={differenceLayerZIndex}
-                            previewLayerZIndex={Z_INDEX.PREVIEW}
-                            classifiedPlots={null}
-                            onPropertySelect={handleSelectProperty}
-                            refreshTrigger={refreshTrigger}
-                        />
-                        {activeModule === 'territorial' && carouselItems.length > 0 && (
+                        <div className="map-mode-toggle-wrap">
+                            <ModeToggle className="map-mode-toggle-btn" />
+                            {mapMode === '3d' && (
+                                <div className="terrain-control-card">
+                                    <label htmlFor="terrain-exaggeration-slider">
+                                        Exagero Vertical: {terrainExaggeration.toFixed(1)}x
+                                    </label>
+                                    <input
+                                        id="terrain-exaggeration-slider"
+                                        type="range"
+                                        min={1}
+                                        max={6}
+                                        step={0.1}
+                                        value={terrainExaggeration}
+                                        onChange={(event) => setTerrainExaggeration(Number(event.target.value))}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        {mapMode === '2d' ? (
+                            <MapView
+                                onDrawComplete={handleDrawComplete}
+                                drawingEnabled={true}
+                                visibleLayerUrl={visibleLayerUrl}
+                                previewLayerUrl={previewLayerUrl} 
+                                previewOverlay={previewOverlay}
+                                activeAoi={activeAoi}
+                                changePolygons={isChangeLayerVisible ? changePolygons : null}
+                                baseMapKey={baseMapKey} onBaseMapChange={setBaseMapKey}
+                                mapViewTarget={mapViewTarget} 
+                                differenceLayerUrl={differenceLayerUrl}
+                                indexLayerZIndex={indexLayerZIndex} 
+                                differenceLayerZIndex={differenceLayerZIndex}
+                                previewLayerZIndex={Z_INDEX.PREVIEW}
+                                classifiedPlots={null}
+                                onPropertySelect={handleSelectProperty}
+                                refreshTrigger={refreshTrigger}
+                                landCoverLayerUrl={landCoverLayerUrl}
+                                landCoverTrainingSamples={{
+                                    type: 'FeatureCollection',
+                                    features: [
+                                        ...landCoverTrainingSamples.features,
+                                        ...landCoverRefinementSamples.features,
+                                    ],
+                                }}
+                                landCoverDrawingEnabled={landCoverDrawingEnabled}
+                                landCoverSelectedClassId={landCoverSelectedClassId}
+                                onLandCoverSampleDrawComplete={handleLandCoverSampleDrawComplete}
+                                landCoverLayerVisible={landCoverLayerVisible}
+                                landCoverRefinementPolygon={landCoverRefinementPolygon}
+                                landCoverDrawingRefinementZone={landCoverDrawingRefinementZone}
+                                onLandCoverRefinementZoneDrawComplete={handleLandCoverRefinementZoneDrawComplete}
+                                onAoiDeleted={handleDeleteAoi}
+                                swipeCandidateLayers={selectedCarouselSwipeLayers}
+                            />
+                        ) : (
+                            <Globe3D
+                                className="globe3d-container"
+                                activeAoi={activeAoi}
+                                terrainExaggeration={terrainExaggeration}
+                                ndviRefreshKey={ndvi3dRefreshKey}
+                                ndviMeanFallback={ndvi3dMeanFallback}
+                                satellite={satellite}
+                                temporalImages={timelineImages.map((img) => ({ id: img.id, date: img.date }))}
+                            />
+                        )}
+                        {activeModule === 'territorial' && mapMode === '2d' && carouselItems.length > 0 && isCarouselVisible && (
                             <ImageCarousel
                                 images={carouselItems} 
                                 selectedIds={selectedImageIds}
@@ -1170,7 +1554,17 @@ const handleSubmitProperty = useCallback(() => {
                                 allSelectableSelected={allSelectableSelected}
                                 onSelectAllImages={handleSelectAllImages}
                                 onDeselectAllImages={handleDeselectAllImages}
+                                onClose={() => setIsCarouselVisible(false)}
                             />
+                        )}
+                        {activeModule === 'territorial' && mapMode === '2d' && carouselItems.length > 0 && !isCarouselVisible && (
+                            <button
+                                type="button"
+                                className="open-carousel-btn"
+                                onClick={() => setIsCarouselVisible(true)}
+                            >
+                                Abrir imagens
+                            </button>
                         )}
                     </main>
                 </div>
@@ -1254,5 +1648,3 @@ const handleSubmitProperty = useCallback(() => {
         </MapStateProvider>
     );
 }
-
-

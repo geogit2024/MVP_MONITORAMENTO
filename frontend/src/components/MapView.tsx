@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import InfoTool from './InfoTool'; 
 import { MapContainer, TileLayer, useMap, GeoJSON, useMapEvents } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
@@ -13,6 +13,15 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 import BaseMapSelector from './BaseMapSelector';
 import LayerControl from './LayerControl';
+import AoiAreaLabel from './map/AoiAreaLabel';
+import SwipeControl from '../modules/swipe/SwipeControl';
+import SwipeDivider from '../modules/swipe/SwipeDivider';
+import SwipeLayerElementClipController from '../modules/swipe/SwipeLayerElementClipController';
+import SwipeRasterLayer from '../modules/swipe/SwipeRasterLayer';
+import useSwipe from '../modules/swipe/useSwipe';
+import type { SwipeLayerDescriptor } from '../modules/swipe/types';
+import { swipeDebug, swipeDebugWarn } from '../modules/swipe/swipeDebug';
+import './MapView.css';
 
 // Corrige icones padrao
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
@@ -54,6 +63,35 @@ const baseMaps = {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const SWIPE_PANEL_POSITION_KEY = 'app.map.swipe.panel.position';
+const SWIPE_BOTTOM_PANE = 'swipe-bottom-pane';
+const SWIPE_TOP_PANE = 'swipe-top-pane';
+
+const hashText = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+};
+
+const makeLayerId = (prefix: string, dynamicValue: string) =>
+  `${prefix}:${hashText(dynamicValue || prefix)}`;
+
+const normalizeSwipeUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  try {
+    const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const parsed = new URL(url, baseOrigin);
+    ['token', 'access_token', 'expires', 'cacheBust', '_ts', 'ts'].forEach((key) => {
+      parsed.searchParams.delete(key);
+    });
+    return `${parsed.origin}${parsed.pathname}?${parsed.searchParams.toString()}`;
+  } catch {
+    return url;
+  }
+};
 
 const CAR_COLORS = {
   ATIVO: '#2e7d32',
@@ -91,19 +129,49 @@ const MapViewAnimator = ({ target }: { target: LatLngBoundsExpression | null }) 
   return null;
 };
 
+const SwipeContainerBinder = ({ onBind }: { onBind: (element: HTMLElement | null) => void }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    onBind(map.getContainer() as HTMLElement);
+    const handleResize = () => onBind(map.getContainer() as HTMLElement);
+    map.on('resize', handleResize);
+    return () => {
+      map.off('resize', handleResize);
+      onBind(null);
+    };
+  }, [map, onBind]);
+
+  return null;
+};
+
 const GeomanDrawControl = ({
   onDrawComplete,
   drawingEnabled,
   isDrawingTalhao,
-  onTalhaoDrawComplete
+  onTalhaoDrawComplete,
+  isDrawingLandCoverSample,
+  landCoverSelectedClassId,
+  onLandCoverSampleDrawComplete,
+  isDrawingLandCoverRefinementZone,
+  onLandCoverRefinementZoneDrawComplete,
+  onAoiDeleted,
 }: {
   onDrawComplete: (geojson: Feature) => void;
   drawingEnabled: boolean;
   isDrawingTalhao?: boolean;
   onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
+  isDrawingLandCoverSample?: boolean;
+  landCoverSelectedClassId?: number | null;
+  onLandCoverSampleDrawComplete?: (geometry: Feature<Polygon>) => void;
+  isDrawingLandCoverRefinementZone?: boolean;
+  onLandCoverRefinementZoneDrawComplete?: (geometry: Feature<Polygon>) => void;
+  onAoiDeleted?: () => void;
 }) => {
   const map = useMap();
-  const isDrawActive = Boolean(drawingEnabled || isDrawingTalhao);
+  const isDrawActive = Boolean(
+    drawingEnabled || isDrawingTalhao || isDrawingLandCoverSample || isDrawingLandCoverRefinementZone
+  );
 
   useEffect(() => {
     if (!map.pm) return;
@@ -138,32 +206,83 @@ const GeomanDrawControl = ({
       const geojson = e.layer.toGeoJSON() as Feature<Polygon>;
       if (isDrawingTalhao && onTalhaoDrawComplete) {
         onTalhaoDrawComplete(geojson);
+      } else if (isDrawingLandCoverRefinementZone && onLandCoverRefinementZoneDrawComplete) {
+        onLandCoverRefinementZoneDrawComplete(geojson);
+        map.pm.disableDraw();
+      } else if (isDrawingLandCoverSample && onLandCoverSampleDrawComplete) {
+        const classId = Number(landCoverSelectedClassId || 0);
+        const sample: Feature<Polygon> = {
+          ...geojson,
+          properties: {
+            ...(geojson.properties || {}),
+            class_id: classId,
+          },
+        };
+        onLandCoverSampleDrawComplete(sample);
       } else {
         onDrawComplete(geojson);
       }
-      map.pm.getGeomanLayers().forEach(layer => {
-        if (layer._leaflet_id !== e.layer._leaflet_id) {
-          layer.remove();
-        }
-      });
-      map.pm.disableDraw();
+      if (!isDrawingLandCoverSample) {
+        map.pm.getGeomanLayers().forEach(layer => {
+          if (layer._leaflet_id !== e.layer._leaflet_id) {
+            layer.remove();
+          }
+        });
+        map.pm.disableDraw();
+      }
     };
 
     map.on('pm:create', handleCreate);
 
+    const handleEdit = (e: any) => {
+      if (isDrawingTalhao || isDrawingLandCoverSample || isDrawingLandCoverRefinementZone) return;
+      const editedLayers = e?.layers?.getLayers?.() ?? [];
+      const firstLayer = editedLayers[0];
+      if (!firstLayer || typeof firstLayer.toGeoJSON !== 'function') return;
+      const editedGeoJson = firstLayer.toGeoJSON() as Feature<Polygon>;
+      onDrawComplete(editedGeoJson);
+    };
+
+    const handleRemove = () => {
+      if (isDrawingTalhao || isDrawingLandCoverSample || isDrawingLandCoverRefinementZone) return;
+      const remaining = map.pm?.getGeomanLayers?.() ?? [];
+      if (remaining.length === 0) {
+        onAoiDeleted?.();
+      }
+    };
+
+    map.on('pm:edit', handleEdit);
+    map.on('pm:remove', handleRemove);
+
     return () => {
       map.pm.removeControls();
       map.off('pm:create', handleCreate);
+      map.off('pm:edit', handleEdit);
+      map.off('pm:remove', handleRemove);
     };
-  }, [map, isDrawActive, isDrawingTalhao, onTalhaoDrawComplete, onDrawComplete]);
+  }, [
+    map,
+    isDrawActive,
+    isDrawingTalhao,
+    onTalhaoDrawComplete,
+    onDrawComplete,
+    isDrawingLandCoverSample,
+    onLandCoverSampleDrawComplete,
+    landCoverSelectedClassId,
+    isDrawingLandCoverRefinementZone,
+    onLandCoverRefinementZoneDrawComplete,
+    onAoiDeleted,
+  ]);
 
   useEffect(() => {
     if (!map.pm) return;
-
-    // Mantem o modo de desenho desligado por padrao.
-    // O usuario inicia manualmente clicando no botao "Draw Polygon".
+    if (isDrawingLandCoverRefinementZone || isDrawingLandCoverSample) {
+      map.pm.enableDraw('Polygon');
+      return;
+    }
+    // Mantem o modo de desenho desligado por padrao para os fluxos legados.
     map.pm.disableDraw();
-  }, [isDrawActive, map]);
+  }, [isDrawActive, map, isDrawingLandCoverSample, isDrawingLandCoverRefinementZone]);
 
   return null;
 };
@@ -200,6 +319,43 @@ const DynamicTileLayer = ({
       }
     };
   }, [url, map, zIndex, opacity, attribution, className]);
+
+  return null;
+};
+
+const DynamicImageOverlay = ({
+  overlay,
+  zIndex = 15,
+  opacity = 0.82,
+}: {
+  overlay: { url: string; bounds: [[number, number], [number, number]] } | null;
+  zIndex?: number;
+  opacity?: number;
+}) => {
+  const map = useMap();
+  const layerRef = useRef<L.ImageOverlay | null>(null);
+
+  useEffect(() => {
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current);
+      layerRef.current = null;
+    }
+
+    if (overlay?.url && Array.isArray(overlay.bounds) && overlay.bounds.length === 2) {
+      const layer = L.imageOverlay(overlay.url, overlay.bounds as LatLngBoundsExpression, {
+        opacity,
+      });
+      layer.setZIndex(zIndex);
+      layer.addTo(map);
+      layerRef.current = layer;
+    }
+
+    return () => {
+      if (layerRef.current && map.hasLayer(layerRef.current)) {
+        map.removeLayer(layerRef.current);
+      }
+    };
+  }, [map, overlay, zIndex, opacity]);
 
   return null;
 };
@@ -450,6 +606,7 @@ interface MapViewProps {
   onDrawComplete: (geojson: Feature) => void;
   visibleLayerUrl: string | null;
   previewLayerUrl: string | null;
+  previewOverlay?: { url: string; bounds: [[number, number], [number, number]] } | null;
   changePolygons: Feature | null;
   activeAoi: Feature | null;
   baseMapKey: string;
@@ -460,16 +617,29 @@ interface MapViewProps {
   differenceLayerZIndex: number;
   previewLayerZIndex: number;
   drawingEnabled: boolean;
+  classifiedPlots?: any;
   onPropertySelect: (id: string) => void;
   refreshTrigger: any;
   isDrawingTalhao?: boolean;
   onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
+  landCoverLayerUrl?: string | null;
+  landCoverTrainingSamples?: FeatureCollection | null;
+  landCoverDrawingEnabled?: boolean;
+  landCoverSelectedClassId?: number | null;
+  onLandCoverSampleDrawComplete?: (geometry: Feature<Polygon>) => void;
+  landCoverLayerVisible?: boolean;
+  landCoverRefinementPolygon?: Feature | null;
+  landCoverDrawingRefinementZone?: boolean;
+  onLandCoverRefinementZoneDrawComplete?: (geometry: Feature<Polygon>) => void;
+  onAoiDeleted?: () => void;
+  swipeCandidateLayers?: SwipeLayerDescriptor[];
 }
 
 export default function MapView({
   onDrawComplete,
   visibleLayerUrl,
   previewLayerUrl,
+  previewOverlay = null,
   changePolygons,
   activeAoi,
   baseMapKey,
@@ -480,10 +650,22 @@ export default function MapView({
   differenceLayerZIndex,
   previewLayerZIndex,
   drawingEnabled,
+  classifiedPlots: _classifiedPlots,
   onPropertySelect,
   refreshTrigger,
   isDrawingTalhao,
-  onTalhaoDrawComplete
+  onTalhaoDrawComplete,
+  landCoverLayerUrl = null,
+  landCoverTrainingSamples = null,
+  landCoverDrawingEnabled = false,
+  landCoverSelectedClassId = null,
+  onLandCoverSampleDrawComplete,
+  landCoverLayerVisible = true,
+  landCoverRefinementPolygon = null,
+  landCoverDrawingRefinementZone = false,
+  onLandCoverRefinementZoneDrawComplete,
+  onAoiDeleted,
+  swipeCandidateLayers = [],
 }: MapViewProps) {
   type NominatimResult = {
     display_name?: string;
@@ -502,7 +684,32 @@ export default function MapView({
   const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(-1);
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false);
   const [propertiesData, setPropertiesData] = useState<FeatureCollection | null>(null);
+  const mapShellRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const [swipePanelPosition, setSwipePanelPosition] = useState<{ x: number; y: number }>(() => {
+    if (typeof window === 'undefined') return { x: 50, y: 92 };
+    const raw = window.sessionStorage.getItem(SWIPE_PANEL_POSITION_KEY);
+    if (!raw) return { x: 50, y: 92 };
+    try {
+      const parsed = JSON.parse(raw) as { x?: number; y?: number };
+      const x = Number(parsed?.x);
+      const y = Number(parsed?.y);
+      return {
+        x: Number.isFinite(x) ? x : 50,
+        y: Number.isFinite(y) ? y : 92,
+      };
+    } catch {
+      return { x: 50, y: 92 };
+    }
+  });
+  const [isDraggingSwipePanel, setIsDraggingSwipePanel] = useState(false);
+  const swipePanelDragRef = useRef<{
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  }>({ pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 });
   const suggestionAbortRef = useRef<AbortController | null>(null);
   const suggestionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeInfoLayer, setActiveInfoLayer] = useState<'car' | 'mapbiomas' | null>(null);
@@ -513,6 +720,182 @@ export default function MapView({
     alertas_desmatamento_mapbiomas: false,
     ucs: false,
   });
+
+  const availableSwipeLayers = useMemo<SwipeLayerDescriptor[]>(() => {
+    if (!activeAoi) return [];
+
+    const selectedLayers: SwipeLayerDescriptor[] = [];
+    const fallbackLayers: SwipeLayerDescriptor[] = [];
+    const seen = new Set<string>();
+    const pushUnique = (layer: SwipeLayerDescriptor) => {
+      if (seen.has(layer.id)) return;
+      seen.add(layer.id);
+      selectedLayers.push(layer);
+    };
+    const pushFallbackUnique = (layer: SwipeLayerDescriptor) => {
+      if (seen.has(layer.id)) return;
+      seen.add(layer.id);
+      fallbackLayers.push(layer);
+    };
+
+    swipeCandidateLayers.forEach(pushUnique);
+    if (selectedLayers.length > 0) {
+      return selectedLayers;
+    }
+
+    if (previewLayerUrl) {
+      pushFallbackUnique({
+        id: makeLayerId('preview-tile', previewLayerUrl),
+        label: 'Pre-visualizacao',
+        kind: 'tile',
+        url: previewLayerUrl,
+        zIndex: previewLayerZIndex,
+        opacity: 0.8,
+        attribution: 'Pre-visualizacao',
+      });
+    }
+
+    if (previewOverlay?.url && previewOverlay.bounds) {
+      pushFallbackUnique({
+        id: makeLayerId('preview-overlay', previewOverlay.url),
+        label: 'Pre-visualizacao (Overlay)',
+        kind: 'imageOverlay',
+        url: previewOverlay.url,
+        bounds: previewOverlay.bounds,
+        zIndex: previewLayerZIndex,
+        opacity: 0.82,
+      });
+    }
+
+    if (visibleLayerUrl) {
+      pushFallbackUnique({
+        id: makeLayerId('index-layer', visibleLayerUrl),
+        label: 'Indice Calculado',
+        kind: 'tile',
+        url: visibleLayerUrl,
+        zIndex: indexLayerZIndex,
+        opacity: 0.8,
+        attribution: 'Indice Calculado',
+      });
+    }
+
+    if (differenceLayerUrl) {
+      pushFallbackUnique({
+        id: makeLayerId('difference-layer', differenceLayerUrl),
+        label: 'Diferenca NDVI',
+        kind: 'tile',
+        url: differenceLayerUrl,
+        zIndex: differenceLayerZIndex,
+        opacity: 0.62,
+        attribution: 'Diferenca NDVI',
+        className: 'difference-tile-soft',
+      });
+    }
+
+    if (landCoverLayerVisible && landCoverLayerUrl) {
+      pushFallbackUnique({
+        id: makeLayerId('landcover-layer', landCoverLayerUrl),
+        label: 'Classificacao Uso do Solo',
+        kind: 'tile',
+        url: landCoverLayerUrl,
+        zIndex: 18,
+        opacity: 0.72,
+        attribution: 'LandCover',
+      });
+    }
+
+    return fallbackLayers;
+  }, [
+    differenceLayerUrl,
+    differenceLayerZIndex,
+    indexLayerZIndex,
+    landCoverLayerUrl,
+    landCoverLayerVisible,
+    previewLayerUrl,
+    previewLayerZIndex,
+    previewOverlay,
+    swipeCandidateLayers,
+    visibleLayerUrl,
+    activeAoi,
+  ]);
+
+  const swipe = useSwipe(availableSwipeLayers);
+  const swipeBottomLayer = swipe.leftLayer;
+  const swipeTopLayer = swipe.rightLayer;
+  const isSwipeRenderActive = Boolean(swipe.isSwipeEnabled && swipeBottomLayer && swipeTopLayer);
+
+  useEffect(() => {
+    const bottomUrl =
+      swipeBottomLayer && (swipeBottomLayer.kind === 'tile' || swipeBottomLayer.kind === 'imageOverlay')
+        ? swipeBottomLayer.url
+        : null;
+    const topUrl =
+      swipeTopLayer && (swipeTopLayer.kind === 'tile' || swipeTopLayer.kind === 'imageOverlay')
+        ? swipeTopLayer.url
+        : null;
+    const bottomNorm = normalizeSwipeUrl(bottomUrl);
+    const topNorm = normalizeSwipeUrl(topUrl);
+
+    swipeDebug('MapView', 'swipe:state', {
+      enabled: swipe.isSwipeEnabled,
+      renderActive: isSwipeRenderActive,
+      dividerPercent: swipe.dividerPercent,
+      revealSide: swipe.revealSide,
+      availableLayerIds: swipe.availableLayers.map((layer) => layer.id),
+      availableLayerUrls: swipe.availableLayers.map((layer) =>
+        layer.kind === 'tile' || layer.kind === 'imageOverlay' ? layer.url : null
+      ),
+      bottomLayerId: swipeBottomLayer?.id ?? null,
+      topLayerId: swipeTopLayer?.id ?? null,
+      bottomLayerUrl: bottomUrl,
+      topLayerUrl: topUrl,
+      bottomLayerUrlNormalized: bottomNorm,
+      topLayerUrlNormalized: topNorm,
+      hasAoi: Boolean(activeAoi),
+    });
+
+    if (isSwipeRenderActive && swipeBottomLayer && swipeTopLayer) {
+      const sameKind = swipeBottomLayer.kind === swipeTopLayer.kind;
+      const sameUrl =
+        sameKind &&
+        ((swipeBottomLayer.kind === 'tile' &&
+          swipeTopLayer.kind === 'tile' &&
+          swipeBottomLayer.url === swipeTopLayer.url) ||
+          (swipeBottomLayer.kind === 'imageOverlay' &&
+            swipeTopLayer.kind === 'imageOverlay' &&
+            swipeBottomLayer.url === swipeTopLayer.url));
+      if (sameUrl) {
+        swipeDebugWarn('MapView', 'swipe:layers-identical-url', {
+          bottomLayerId: swipeBottomLayer.id,
+          topLayerId: swipeTopLayer.id,
+          url:
+            swipeBottomLayer.kind === 'tile' && swipeTopLayer.kind === 'tile'
+              ? swipeBottomLayer.url
+              : swipeBottomLayer.kind === 'imageOverlay' && swipeTopLayer.kind === 'imageOverlay'
+                ? swipeBottomLayer.url
+                : null,
+        });
+      }
+      const sameNormalized = Boolean(bottomNorm && topNorm && bottomNorm === topNorm);
+      if (sameNormalized) {
+        swipeDebugWarn('MapView', 'swipe:layers-identical-normalized-url', {
+          bottomLayerId: swipeBottomLayer.id,
+          topLayerId: swipeTopLayer.id,
+          bottomNorm,
+          topNorm,
+        });
+      }
+    }
+  }, [
+    activeAoi,
+    isSwipeRenderActive,
+    swipe.availableLayers,
+    swipe.dividerPercent,
+    swipe.isSwipeEnabled,
+    swipe.revealSide,
+    swipeBottomLayer,
+    swipeTopLayer,
+  ]);
 
   const handleWmsLayerToggle = (layerName: string, isVisible: boolean) => {
     if (!isVisible) {
@@ -647,6 +1030,127 @@ export default function MapView({
   }
 }, [activeInfoLayer]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.pm) return;
+
+    if (!activeAoi) {
+      const geomanLayers = map.pm.getGeomanLayers?.() ?? [];
+      geomanLayers.forEach((layer: any) => {
+        if (layer && typeof layer.remove === 'function') {
+          layer.remove();
+        }
+      });
+    }
+  }, [activeAoi]);
+
+  const handleBindSwipeContainer = useCallback(
+    (element: HTMLElement | null) => {
+      swipe.setContainerElement(element ?? mapShellRef.current);
+    },
+    [swipe.setContainerElement]
+  );
+
+  useEffect(() => {
+    if (!activeAoi && swipe.isSwipeEnabled) {
+      swipe.disableSwipe();
+    }
+  }, [activeAoi, swipe.disableSwipe, swipe.isSwipeEnabled]);
+
+  useEffect(() => {
+    if (activeAoi) {
+      swipe.resetSwipe();
+    }
+  }, [activeAoi, swipe.resetSwipe]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(SWIPE_PANEL_POSITION_KEY, JSON.stringify(swipePanelPosition));
+  }, [swipePanelPosition]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setSwipePanelPosition((prev) => {
+        const shell = mapShellRef.current;
+        if (!shell) return prev;
+        const rect = shell.getBoundingClientRect();
+        const minX = 8;
+        const minY = 8;
+        const maxX = Math.max(minX, rect.width - 308);
+        const maxY = Math.max(minY, rect.height - 220);
+        return {
+          x: Math.min(Math.max(prev.x, minX), maxX),
+          y: Math.min(Math.max(prev.y, minY), maxY),
+        };
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isDraggingSwipePanel) return;
+
+    const clampPosition = (x: number, y: number) => {
+      const shell = mapShellRef.current;
+      if (!shell) return { x, y };
+      const shellRect = shell.getBoundingClientRect();
+      const minX = 8;
+      const minY = 8;
+      const maxX = Math.max(minX, shellRect.width - 308);
+      const maxY = Math.max(minY, shellRect.height - 220);
+      return {
+        x: Math.min(Math.max(x, minX), maxX),
+        y: Math.min(Math.max(y, minY), maxY),
+      };
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = swipePanelDragRef.current;
+      if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
+      const nextX = drag.originX + (event.clientX - drag.startX);
+      const nextY = drag.originY + (event.clientY - drag.startY);
+      setSwipePanelPosition(clampPosition(nextX, nextY));
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      const drag = swipePanelDragRef.current;
+      if (drag.pointerId !== null && event.pointerId !== drag.pointerId) return;
+      setIsDraggingSwipePanel(false);
+      swipePanelDragRef.current.pointerId = null;
+      document.body.classList.remove('swipe-panel-dragging');
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [isDraggingSwipePanel]);
+
+  useEffect(() => () => document.body.classList.remove('swipe-panel-dragging'), []);
+
+  const handleSwipePanelDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    swipePanelDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: swipePanelPosition.x,
+      originY: swipePanelPosition.y,
+    };
+    setIsDraggingSwipePanel(true);
+    document.body.classList.add('swipe-panel-dragging');
+    if (event.currentTarget.setPointerCapture) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+  }, [swipePanelPosition.x, swipePanelPosition.y]);
+
   const onEachProperty = (feature: Feature, layer: Layer) => {
     if (feature.properties) {
       const { nome, proprietario, id } = feature.properties;
@@ -666,14 +1170,16 @@ export default function MapView({
     () =>
       ({
         color: '#4aa3ff',
-        weight: 2,
+        weight: swipe.isSwipeEnabled ? 2.4 : 2,
         opacity: 0.78,
         fillColor: '#9ad8ff',
-        fillOpacity: 0.14,
+        fillOpacity: swipe.isSwipeEnabled ? 0 : 0.14,
         lineCap: 'round',
         lineJoin: 'round',
+        className: swipe.isSwipeEnabled ? 'aoi-swipe-outline' : 'aoi-default',
+        interactive: false,
       } as L.PathOptions),
-    []
+    [swipe.isSwipeEnabled]
   );
 
   const changePolygonsStyle = useMemo(
@@ -686,6 +1192,31 @@ export default function MapView({
         fillOpacity: 0.1,
         lineCap: 'round',
         lineJoin: 'round',
+      } as L.PathOptions),
+    []
+  );
+  const trainingSamplesStyle = useMemo(
+    () =>
+      ({
+        color: '#f59e0b',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.2,
+        lineCap: 'round',
+        lineJoin: 'round',
+      } as L.PathOptions),
+    []
+  );
+  const refinementZoneStyle = useMemo(
+    () =>
+      ({
+        color: '#f59e0b',
+        weight: 2,
+        opacity: 0.95,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.08,
+        dashArray: '6 4',
       } as L.PathOptions),
     []
   );
@@ -866,9 +1397,37 @@ export default function MapView({
   }, []);
 
   return (
-    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+    <div ref={mapShellRef} className={`map-view-shell ${swipe.isSwipeEnabled ? 'is-swipe-active' : ''}`}>
       <div style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 1000 }}>
         <BaseMapSelector value={baseMapKey} onChange={onBaseMapChange} />
+      </div>
+      <div
+        style={{
+          position: 'absolute',
+          top: `${swipePanelPosition.y}px`,
+          left: `${swipePanelPosition.x}px`,
+          zIndex: 1200,
+        }}
+      >
+        <SwipeControl
+          availableLayers={swipe.availableLayers}
+          leftLayerId={swipe.leftLayerId}
+          rightLayerId={swipe.rightLayerId}
+          isSwipeEnabled={swipe.isSwipeEnabled}
+          canEnableSwipe={swipe.canEnableSwipe}
+          hasAtLeastTwoLayers={swipe.hasAtLeastTwoLayers}
+          hasDistinctLayerSources={swipe.hasDistinctLayerSources}
+          isAoiReady={Boolean(activeAoi)}
+          revealSide={swipe.revealSide}
+          onLeftLayerChange={swipe.setLeftLayerId}
+          onRightLayerChange={swipe.setRightLayerId}
+          onEnable={swipe.enableSwipe}
+          onDisable={swipe.disableSwipe}
+          onReset={swipe.resetSwipe}
+          onSwap={swipe.swapLayers}
+          onToggleRevealSide={swipe.toggleRevealSide}
+          onPanelDragStart={handleSwipePanelDragStart}
+        />
       </div>
       <div
         style={{
@@ -1026,6 +1585,7 @@ export default function MapView({
         ref={mapRef}
       >
         <TileLayer key={baseMapKey} url={activeBaseMap.url} attribution={activeBaseMap.attribution} />
+        <SwipeContainerBinder onBind={handleBindSwipeContainer} />
         
         <MapClickHandler onMapClick={handleGetFeatureInfo} />
 
@@ -1035,17 +1595,56 @@ export default function MapView({
           drawingEnabled={drawingEnabled}
           isDrawingTalhao={isDrawingTalhao}
           onTalhaoDrawComplete={onTalhaoDrawComplete}
+          isDrawingLandCoverSample={landCoverDrawingEnabled}
+          landCoverSelectedClassId={landCoverSelectedClassId}
+          onLandCoverSampleDrawComplete={onLandCoverSampleDrawComplete}
+          isDrawingLandCoverRefinementZone={landCoverDrawingRefinementZone}
+          onLandCoverRefinementZoneDrawComplete={onLandCoverRefinementZoneDrawComplete}
+          onAoiDeleted={onAoiDeleted}
         />
+        <AoiAreaLabel aoi={activeAoi} />
         
-        <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Ãndice Calculado" />
-        <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="PrÃ©-visualizaÃ§Ã£o" />
-        <DynamicTileLayer
-          url={differenceLayerUrl}
-          zIndex={differenceLayerZIndex}
-          opacity={0.62}
-          attribution="DiferenÃƒÂ§a NDVI"
-          className="difference-tile-soft"
-        />
+        {!isSwipeRenderActive ? (
+          <>
+            <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Indice Calculado" />
+            <DynamicTileLayer
+              url={landCoverLayerVisible ? landCoverLayerUrl || null : null}
+              zIndex={18}
+              opacity={0.72}
+              attribution="LandCover"
+            />
+            <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pre-visualizacao" />
+            <DynamicImageOverlay overlay={previewOverlay} zIndex={previewLayerZIndex} />
+            <DynamicTileLayer
+              url={differenceLayerUrl}
+              zIndex={differenceLayerZIndex}
+              opacity={0.62}
+              attribution="Diferenca NDVI"
+              className="difference-tile-soft"
+            />
+          </>
+        ) : (
+          <>
+            <SwipeRasterLayer
+              descriptor={swipeBottomLayer}
+              paneName={SWIPE_BOTTOM_PANE}
+              paneZIndex={455}
+              forceOpaque
+            />
+            <SwipeRasterLayer
+              descriptor={swipeTopLayer}
+              paneName={SWIPE_TOP_PANE}
+              paneZIndex={456}
+              forceOpaque
+            />
+            <SwipeLayerElementClipController
+              enabled={isSwipeRenderActive}
+              dividerPercent={swipe.dividerPercent}
+              revealSide={swipe.revealSide}
+              paneName={SWIPE_TOP_PANE}
+            />
+          </>
+        )}
 
         <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms"
@@ -1079,11 +1678,31 @@ export default function MapView({
 />
 
         {changePolygons && <GeoJSON data={changePolygons as any} style={changePolygonsStyle} />}
+        {landCoverTrainingSamples && (
+          <GeoJSON
+            key={JSON.stringify(landCoverTrainingSamples)}
+            data={landCoverTrainingSamples as any}
+            style={trainingSamplesStyle}
+          />
+        )}
+        {landCoverRefinementPolygon && (
+          <GeoJSON
+            key={JSON.stringify(landCoverRefinementPolygon)}
+            data={landCoverRefinementPolygon as any}
+            style={refinementZoneStyle}
+          />
+        )}
         {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} style={aoiStyle} />}
         {propertiesData && <GeoJSON data={propertiesData} onEachFeature={onEachProperty} />}
         
         {showFirmsPoints && <FirmsDataLayer />}
         <PrecipitationLayer visible={showPrecipitation} />
+        <SwipeDivider
+          isEnabled={isSwipeRenderActive}
+          dividerPercent={swipe.dividerPercent}
+          revealSide={swipe.revealSide}
+          onPointerDown={swipe.onDividerPointerDown}
+        />
       </MapContainer>
 
       <div style={{ position: 'absolute', bottom: '20px', left: '10px', zIndex: 1001, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1097,5 +1716,3 @@ export default function MapView({
     </div>
   );
 }
-
-
