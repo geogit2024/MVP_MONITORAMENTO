@@ -1,9 +1,9 @@
-// src/components/PropertyForm.tsx
+﻿// src/components/PropertyForm.tsx
 
 import React, { useState, useEffect } from 'react'; // Importe useEffect aqui
 import { Feature, Geometry } from 'geojson'; 
 import './PropertyForm.css';
-import { Property } from '../../types';
+import type { Property } from '../types/property';
 
 interface PropertyFormProps {
   geometry?: Feature | Geometry;
@@ -12,7 +12,7 @@ interface PropertyFormProps {
   initialData?: Property | null;
   isReadOnly: boolean;
   onEdit?: () => void;
-  onDelete?: (propertyId: string) => void; // Certifique-se de que esta prop está definida na interface
+  onDelete?: (propertyId: string) => void; // Certifique-se de que esta prop estÃ¡ definida na interface
   onSegmentationComplete?: () => void;
   onCadastrarTalhao?: () => void; // NOVO
 
@@ -62,8 +62,8 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
     }
 
     if (!geometryToProcess) {
-      console.error("Erro: A geometria da propriedade não está definida para salvar.");
-      alert("Não foi possível salvar: A geometria da propriedade está faltando ou é inválida.");
+      console.error("Erro: A geometria da propriedade nÃ£o estÃ¡ definida para salvar.");
+      alert("NÃ£o foi possÃ­vel salvar: A geometria da propriedade estÃ¡ faltando ou Ã© invÃ¡lida.");
       setIsLoading(false);
       return;
     }
@@ -108,7 +108,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
                 return `Campo '${fieldName}': ${err.msg}`;
               })
               .join('\n');
-            throw new Error(`Erros de validação:\n${errorMessages}`);
+            throw new Error(`Erros de validaÃ§Ã£o:\n${errorMessages}`);
           }
           throw new Error(errorData.detail || 'Erro desconhecido no servidor.');
         } catch {
@@ -120,7 +120,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
       onSubmit(result);
     } catch (error: any) {
       console.error('Erro ao salvar propriedade:', error);
-      alert(error.message || 'Erro de conexão. Verifique sua rede e o servidor.');
+      alert(error.message || 'Erro de conexÃ£o. Verifique sua rede e o servidor.');
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +144,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
           onSubmit={!isReadOnly ? handleSubmit : (e) => e.preventDefault()}
         >
           <fieldset disabled={isLoading || isReadOnly}>
-            <legend>1. Identificação do Imóvel Rural</legend>
+            <legend>1. IdentificaÃ§Ã£o do ImÃ³vel Rural</legend>
             <div className="form-grid">
               <div className="form-group full-width">
                 <label htmlFor="propriedade_nome">Nome da propriedade</label>
@@ -157,7 +157,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="incra_codigo">Código do Imóvel no INCRA</label>
+                <label htmlFor="incra_codigo">CÃ³digo do ImÃ³vel no INCRA</label>
                 <input
                   type="text"
                   id="incra_codigo"
@@ -166,7 +166,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="municipio">Município</label>
+                <label htmlFor="municipio">MunicÃ­pio</label>
                 <input
                   type="text"
                   id="municipio"
@@ -186,7 +186,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="area_total">Área total (ha)</label>
+                <label htmlFor="area_total">Ãrea total (ha)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -200,10 +200,10 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
           </fieldset>
 
           <fieldset disabled={isLoading || isReadOnly}>
-            <legend>2. Identificação do Proprietário</legend>
+            <legend>2. IdentificaÃ§Ã£o do ProprietÃ¡rio</legend>
             <div className="form-grid">
               <div className="form-group full-width">
-                <label htmlFor="proprietario_nome">Nome completo / Razão Social</label>
+                <label htmlFor="proprietario_nome">Nome completo / RazÃ£o Social</label>
                 <input
                   type="text"
                   id="proprietario_nome"
@@ -236,10 +236,10 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
           </fieldset>
 
           <fieldset disabled={isLoading || isReadOnly}>
-            <legend>3. Documentação do Imóvel</legend>
+            <legend>3. DocumentaÃ§Ã£o do ImÃ³vel</legend>
             <div className="form-grid">
               <div className="form-group">
-                <label htmlFor="matricula">Número da matrícula / escritura</label>
+                <label htmlFor="matricula">NÃºmero da matrÃ­cula / escritura</label>
                 <input
                   type="text"
                   id="matricula"
@@ -248,7 +248,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="ccir">Número do CCIR</label>
+                <label htmlFor="ccir">NÃºmero do CCIR</label>
                 <input
                   type="text"
                   id="ccir"
@@ -280,7 +280,7 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
               type="button"
               onClick={() => {
                 if (onEdit) {
-                  onEdit(); // importante para liberar edição no componente pai
+                  onEdit(); // importante para liberar ediÃ§Ã£o no componente pai
                 }
               }}
               className="button-secondary"
@@ -289,19 +289,19 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
               Editar
             </button>
 
-            {/* CONSOLE.LOG ADICIONADO AQUI PARA DEPURAR A RENDERIZAÇÃO DO BOTÃO APAGAR */}
-            {console.log('Condições para botão Apagar:', {
+            {/* CONSOLE.LOG ADICIONADO AQUI PARA DEPURAR A RENDERIZAÃ‡ÃƒO DO BOTÃƒO APAGAR */}
+            {console.log('CondiÃ§Ãµes para botÃ£o Apagar:', {
               isReadOnly: isReadOnly,
               initialDataExists: !!initialData,
               initialDataId: initialData?.id,
               onDeleteIsFunction: typeof onDelete === 'function'
             })}
 
-            {/* Botão Apagar Registro - SÓ SERÁ RENDERIZADO SE TODAS AS CONDIÇÕES FOREM TRUE */}
+            {/* BotÃ£o Apagar Registro - SÃ“ SERÃ RENDERIZADO SE TODAS AS CONDIÃ‡Ã•ES FOREM TRUE */}
             {typeof onDelete === 'function' && (
               <button
                 type="button"
-                onClick={() => initialData?.id && onDelete(initialData.id)}
+                onClick={() => initialData?.id && onDelete(String(initialData.id))}
                 className="button-delete"
                 disabled={isLoading}
               >
@@ -326,15 +326,15 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
     type="button"
     onClick={() => {
       if (onCadastrarTalhao) {
-        onCadastrarTalhao(); // callback para ação de cadastro de talhão
+        onCadastrarTalhao(); // callback para aÃ§Ã£o de cadastro de talhÃ£o
       } else {
-        alert("Funcionalidade de cadastro de talhão ainda não implementada.");
+        alert("Funcionalidade de cadastro de talhÃ£o ainda nÃ£o implementada.");
       }
     }}
     className="button-secondary"
     disabled={isLoading}
   >
-    Cadastrar Talhão
+    Cadastrar TalhÃ£o
   </button>
 )}
 
@@ -353,3 +353,4 @@ const PropertyForm: React.FC<PropertyFormProps> = ({
 };
 
 export default PropertyForm;
+

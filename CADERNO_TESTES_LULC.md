@@ -147,9 +147,8 @@ Objetivo do refinamento:
 
 ### Etapa R1 - Preparar base para refinamento
 Pre-condicao:
-- voce ja executou a classificacao base com sucesso.
-
-1. Confirmar no painel LULC que a classificacao atual esta visivel no mapa.
+-
+1. Confirmar no painel 
 2. Confirmar que o sistema possui `classification_id` base (internamente salvo).
 3. Resultado esperado:
 - camada classificada base ativa e pronta para refinamento.

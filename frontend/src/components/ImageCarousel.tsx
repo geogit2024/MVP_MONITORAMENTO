@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { ImageInfo } from '../MainApplication';
+﻿import React, { useEffect, useRef } from 'react';
+import type { ImageInfo } from '../types/image';
 import './ImageCarousel.css';
 
 const CHANGE_LAYER_ID = 'change-detection-result';
@@ -72,7 +72,7 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({
         title="Fechar carrossel de imagens"
         aria-label="Fechar carrossel de imagens"
       >
-        ×
+        Ã—
       </button>
       <div className="image-carousel-track" ref={trackRef}>
         {images.map((img) => {
@@ -130,7 +130,7 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({
                   onSelect(img.id);
                 }}
               >
-                {isActive ? '✓' : ''}
+                {isActive ? 'âœ“' : ''}
               </div>
             </div>
           );
@@ -190,3 +190,4 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({
 };
 
 export default ImageCarousel;
+

@@ -20,6 +20,8 @@ export default defineConfig({
     CESIUM_BASE_URL: JSON.stringify(`/${cesiumBaseUrl}`),
   },
   server: {
+    host: true,
+    allowedHosts: ['.ngrok-free.dev', '.ngrok.app', 'localhost', '127.0.0.1'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

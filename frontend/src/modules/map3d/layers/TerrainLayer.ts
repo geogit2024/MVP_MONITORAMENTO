@@ -1,14 +1,27 @@
 import { ImageryLayer, UrlTemplateImageryProvider, Viewer, createWorldTerrainAsync } from 'cesium'
 
-const demOverlayByViewer = new WeakMap<Viewer, ImageryLayer>()
+interface DemOverlayRuntime {
+  layer: ImageryLayer
+  detachErrorListener?: () => void
+}
+
+const demOverlayByViewer = new WeakMap<Viewer, DemOverlayRuntime>()
+
+const isViewerUsable = (viewer: Viewer | null | undefined): viewer is Viewer => {
+  if (!viewer) return false
+  return typeof viewer.isDestroyed === 'function' ? !viewer.isDestroyed() : true
+}
 
 export async function applyTerrainLayer(viewer: Viewer, exaggeration = 1) {
+  if (!isViewerUsable(viewer)) return
   const terrainProvider = await createWorldTerrainAsync()
+  if (!isViewerUsable(viewer)) return
   viewer.terrainProvider = terrainProvider
   viewer.scene.verticalExaggeration = exaggeration
 }
 
 export function setTerrainExaggeration(viewer: Viewer, exaggeration: number) {
+  if (!isViewerUsable(viewer)) return
   viewer.scene.verticalExaggeration = exaggeration
 }
 
@@ -29,17 +42,55 @@ export async function fetchDemTile(apiBaseUrl: string, bbox?: [number, number, n
 }
 
 export function clearDemOverlay(viewer: Viewer) {
-  const existing = demOverlayByViewer.get(viewer)
+  if (!isViewerUsable(viewer)) {
+    demOverlayByViewer.delete(viewer)
+    return
+  }
+  const runtime = demOverlayByViewer.get(viewer)
+  if (runtime?.detachErrorListener) {
+    runtime.detachErrorListener()
+  }
+  const existing = runtime?.layer
   if (!existing) return
-  viewer.imageryLayers.remove(existing, true)
+  try {
+    viewer.imageryLayers.remove(existing, true)
+  } catch (_error) {
+    // Ignore teardown race when switching 3D -> 2D and Cesium already disposed internals.
+  }
   demOverlayByViewer.delete(viewer)
 }
 
-export function applyDemOverlay(viewer: Viewer, tileUrl: string, alpha = 0.35) {
+export function applyDemOverlay(
+  viewer: Viewer,
+  tileUrl: string,
+  alpha = 0.35,
+  onFatalError?: (message: string) => void,
+) {
+  if (!isViewerUsable(viewer)) return
   clearDemOverlay(viewer)
+  const provider = new UrlTemplateImageryProvider({ url: tileUrl })
+  let providerErrorCount = 0
+  const removeErrorListener = provider.errorEvent.addEventListener((tileError) => {
+    providerErrorCount += 1
+    const message =
+      typeof tileError?.message === 'string' && tileError.message.length
+        ? tileError.message
+        : 'falha de tile sem mensagem'
+    if (providerErrorCount <= 2) {
+      tileError.retry = true
+      return
+    }
+    console.warn('DEM 3D: falha persistente ao carregar tiles.', {
+      attempts: providerErrorCount,
+      message,
+      tileUrl: tileUrl.length > 220 ? `${tileUrl.slice(0, 220)}...<len:${tileUrl.length}>` : tileUrl,
+    })
+    clearDemOverlay(viewer)
+    onFatalError?.('Nao foi possivel exibir o relevo analitico para esta area.')
+  })
   const layer = viewer.imageryLayers.addImageryProvider(
-    new UrlTemplateImageryProvider({ url: tileUrl }),
+    provider,
   )
   layer.alpha = alpha
-  demOverlayByViewer.set(viewer, layer)
+  demOverlayByViewer.set(viewer, { layer, detachErrorListener: removeErrorListener })
 }

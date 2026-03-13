@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+﻿import React, { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import InfoTool from './InfoTool'; 
-import { MapContainer, TileLayer, useMap, GeoJSON, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap, GeoJSON, useMapEvents, Pane } from 'react-leaflet';
 import L, { LatLngBoundsExpression, Layer } from 'leaflet';
-import { Feature, FeatureCollection, Polygon } from 'geojson';
+import { Feature, FeatureCollection, Polygon, MultiPolygon } from 'geojson';
 import FirmsDataLayer from './FirmsDataLayer';
 import PrecipitationLayer from './PrecipitationLayer';
 import 'leaflet/dist/leaflet.css';
@@ -27,21 +27,14 @@ import './MapView.css';
 (L.Icon.Default.prototype as any)._getIconUrl = undefined;
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
-export const fireIcon = new L.Icon({
-  iconUrl: 'https://cdn-icons-png.flaticon.com/512/482/482541.png',
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-  popupAnchor: [0, -12],
-});
-
 const baseMaps = {
   osm: {
-    name: 'PadrÃ£o',
+    name: 'PadrÃƒÂ£o',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors',
   },
   satellite: {
-    name: 'SatÃ©lite',
+    name: 'SatÃƒÂ©lite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
   },
@@ -91,6 +84,15 @@ const normalizeSwipeUrl = (url: string | null | undefined): string | null => {
   } catch {
     return url;
   }
+};
+
+const normalizeTileTemplateUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null;
+  return url
+    .replace(/%7B/gi, '{')
+    .replace(/%7D/gi, '}')
+    .replace(/&#123;/g, '{')
+    .replace(/&#125;/g, '}');
 };
 
 const CAR_COLORS = {
@@ -151,24 +153,34 @@ const GeomanDrawControl = ({
   isDrawingTalhao,
   onTalhaoDrawComplete,
   isDrawingLandCoverSample,
+  trainingSamplesClearVersion,
+  isLandCoverRefinementMode,
   landCoverSelectedClassId,
   onLandCoverSampleDrawComplete,
   isDrawingLandCoverRefinementZone,
   onLandCoverRefinementZoneDrawComplete,
+  refinementClearVersion,
   onAoiDeleted,
+  isEditingLandCoverAIPolygon,
 }: {
   onDrawComplete: (geojson: Feature) => void;
   drawingEnabled: boolean;
   isDrawingTalhao?: boolean;
   onTalhaoDrawComplete?: (geometry: Feature<Polygon>) => void;
   isDrawingLandCoverSample?: boolean;
+  trainingSamplesClearVersion?: number;
+  isLandCoverRefinementMode?: boolean;
   landCoverSelectedClassId?: number | null;
   onLandCoverSampleDrawComplete?: (geometry: Feature<Polygon>) => void;
   isDrawingLandCoverRefinementZone?: boolean;
   onLandCoverRefinementZoneDrawComplete?: (geometry: Feature<Polygon>) => void;
+  refinementClearVersion?: number;
   onAoiDeleted?: () => void;
+  isEditingLandCoverAIPolygon?: boolean;
 }) => {
   const map = useMap();
+  const trainingSampleLayerIdsRef = useRef<Set<number>>(new Set());
+  const refinementLayerIdsRef = useRef<Set<number>>(new Set());
   const isDrawActive = Boolean(
     drawingEnabled || isDrawingTalhao || isDrawingLandCoverSample || isDrawingLandCoverRefinementZone
   );
@@ -182,7 +194,6 @@ const GeomanDrawControl = ({
       map.pm.disableGlobalRemovalMode?.();
       map.pm.disableGlobalDragMode?.();
       map.pm.disableGlobalCutMode?.();
-      map.pm.removeControls();
       return;
     }
 
@@ -207,9 +218,21 @@ const GeomanDrawControl = ({
       if (isDrawingTalhao && onTalhaoDrawComplete) {
         onTalhaoDrawComplete(geojson);
       } else if (isDrawingLandCoverRefinementZone && onLandCoverRefinementZoneDrawComplete) {
+        const refinementLayerId = Number(e?.layer?._leaflet_id);
+        if (Number.isFinite(refinementLayerId)) {
+          refinementLayerIdsRef.current.add(refinementLayerId);
+        }
         onLandCoverRefinementZoneDrawComplete(geojson);
         map.pm.disableDraw();
       } else if (isDrawingLandCoverSample && onLandCoverSampleDrawComplete) {
+        const sampleLayerId = Number(e?.layer?._leaflet_id);
+        if (Number.isFinite(sampleLayerId)) {
+          if (isLandCoverRefinementMode) {
+            refinementLayerIdsRef.current.add(sampleLayerId);
+          } else {
+            trainingSampleLayerIdsRef.current.add(sampleLayerId);
+          }
+        }
         const classId = Number(landCoverSelectedClassId || 0);
         const sample: Feature<Polygon> = {
           ...geojson,
@@ -223,9 +246,11 @@ const GeomanDrawControl = ({
         onDrawComplete(geojson);
       }
       if (!isDrawingLandCoverSample) {
-        map.pm.getGeomanLayers().forEach(layer => {
-          if (layer._leaflet_id !== e.layer._leaflet_id) {
-            layer.remove();
+        map.pm.getGeomanLayers().forEach((layer) => {
+          const currentLayer = layer as Layer & { _leaflet_id?: number; remove: () => void };
+          const createdLayer = e.layer as { _leaflet_id?: number };
+          if (currentLayer._leaflet_id !== createdLayer._leaflet_id) {
+            currentLayer.remove();
           }
         });
         map.pm.disableDraw();
@@ -235,7 +260,14 @@ const GeomanDrawControl = ({
     map.on('pm:create', handleCreate);
 
     const handleEdit = (e: any) => {
-      if (isDrawingTalhao || isDrawingLandCoverSample || isDrawingLandCoverRefinementZone) return;
+      if (
+        isDrawingTalhao ||
+        isDrawingLandCoverSample ||
+        isDrawingLandCoverRefinementZone ||
+        isEditingLandCoverAIPolygon
+      ) {
+        return;
+      }
       const editedLayers = e?.layers?.getLayers?.() ?? [];
       const firstLayer = editedLayers[0];
       if (!firstLayer || typeof firstLayer.toGeoJSON !== 'function') return;
@@ -267,12 +299,44 @@ const GeomanDrawControl = ({
     onTalhaoDrawComplete,
     onDrawComplete,
     isDrawingLandCoverSample,
+    isLandCoverRefinementMode,
     onLandCoverSampleDrawComplete,
     landCoverSelectedClassId,
     isDrawingLandCoverRefinementZone,
     onLandCoverRefinementZoneDrawComplete,
     onAoiDeleted,
+    isEditingLandCoverAIPolygon,
   ]);
+
+  useEffect(() => {
+    if (!map.pm || trainingSamplesClearVersion === undefined) return;
+    const trackedIds = trainingSampleLayerIdsRef.current;
+    if (trackedIds.size === 0) return;
+
+    map.pm.getGeomanLayers().forEach((layer: any) => {
+      const layerId = Number(layer?._leaflet_id);
+      if (!Number.isFinite(layerId) || !trackedIds.has(layerId)) return;
+      layer.remove();
+    });
+
+    trackedIds.clear();
+    map.pm.disableDraw();
+  }, [map, trainingSamplesClearVersion]);
+
+  useEffect(() => {
+    if (!map.pm || refinementClearVersion === undefined) return;
+    const trackedIds = refinementLayerIdsRef.current;
+    if (trackedIds.size === 0) return;
+
+    map.pm.getGeomanLayers().forEach((layer: any) => {
+      const layerId = Number(layer?._leaflet_id);
+      if (!Number.isFinite(layerId) || !trackedIds.has(layerId)) return;
+      layer.remove();
+    });
+
+    trackedIds.clear();
+    map.pm.disableDraw();
+  }, [map, refinementClearVersion]);
 
   useEffect(() => {
     if (!map.pm) return;
@@ -292,33 +356,100 @@ const DynamicTileLayer = ({
   zIndex = 10,
   opacity = 0.8,
   attribution,
-  className
+  className,
+  layerLabel = 'camada raster',
+  onLayerFailure,
 }: {
   url: string | null;
   zIndex?: number;
   opacity?: number;
   attribution?: string;
   className?: string;
+  layerLabel?: string;
+  onLayerFailure?: (message: string | null) => void;
 }) => {
   const map = useMap();
   const layerRef = useRef<L.TileLayer | null>(null);
 
   useEffect(() => {
+    const effectiveUrl = normalizeTileTemplateUrl(url);
+    let tileErrorCount = 0;
+    let hasLoadedAnyTile = false;
+    let retryScheduled = false;
+    let disposed = false;
+    const maxTileErrorsBeforeDisable = 14;
+
     if (layerRef.current) {
       map.removeLayer(layerRef.current);
       layerRef.current = null;
     }
-    if (url) {
-      const newLayer = L.tileLayer(url, { zIndex, opacity, attribution, className });
+    if (effectiveUrl) {
+      const newLayer = L.tileLayer(effectiveUrl, { zIndex, opacity, attribution, className });
+      const onTileLoad = () => {
+        hasLoadedAnyTile = true;
+        tileErrorCount = 0;
+        retryScheduled = false;
+        onLayerFailure?.(null);
+      };
+      const onTileError = (event: any) => {
+        tileErrorCount += 1;
+        const message = String(event?.error?.message || 'falha ao carregar tile');
+        if (!retryScheduled && tileErrorCount <= 2) {
+          retryScheduled = true;
+          window.setTimeout(() => {
+            if (disposed) return;
+            retryScheduled = false;
+            newLayer.redraw();
+          }, 550);
+        }
+        if (tileErrorCount < maxTileErrorsBeforeDisable || hasLoadedAnyTile) {
+          if (tileErrorCount === 1 || tileErrorCount % 6 === 0) {
+            console.warn('[MapView] Falha ao carregar tile (transiente).', {
+              layerLabel,
+              sourceUrl: effectiveUrl.length > 220 ? `${effectiveUrl.slice(0, 220)}...<len:${effectiveUrl.length}>` : effectiveUrl,
+              tileUrl: typeof event?.tile?.src === 'string'
+                ? (event.tile.src.length > 220 ? `${event.tile.src.slice(0, 220)}...<len:${event.tile.src.length}>` : event.tile.src)
+                : null,
+              coords: event?.coords ?? null,
+              message,
+              errorCount: tileErrorCount,
+            });
+          }
+          return;
+        }
+        console.error('[MapView] Camada desativada por falha persistente de tiles.', {
+          layerLabel,
+          sourceUrl: effectiveUrl.length > 220 ? `${effectiveUrl.slice(0, 220)}...<len:${effectiveUrl.length}>` : effectiveUrl,
+          message,
+          errorCount: tileErrorCount,
+        });
+        if (map.hasLayer(newLayer)) {
+          map.removeLayer(newLayer);
+        }
+        if (layerRef.current === newLayer) {
+          layerRef.current = null;
+        }
+        onLayerFailure?.(`Nao foi possivel exibir ${layerLabel}. Verifique a disponibilidade do servico.`);
+      };
+      newLayer.on('load', onTileLoad);
+      newLayer.on('tileerror', onTileError);
+      newLayer.once('remove', () => {
+        newLayer.off('load', onTileLoad);
+        newLayer.off('tileerror', onTileError);
+      });
       newLayer.addTo(map);
       layerRef.current = newLayer;
+      onLayerFailure?.(null);
+    } else {
+      onLayerFailure?.(null);
     }
     return () => {
+      disposed = true;
       if (layerRef.current && map.hasLayer(layerRef.current)) {
         map.removeLayer(layerRef.current);
       }
     };
-  }, [url, map, zIndex, opacity, attribution, className]);
+  }, [url, map, zIndex, opacity, attribution, className, layerLabel, onLayerFailure]);
 
   return null;
 };
@@ -375,9 +506,9 @@ const WmsLayer = ({ url, options, visible, layerName }: { url: string; options: 
   useEffect(() => {
     if (visible) {
       if (!layerRef.current) {
-        layerRef.current = L.tileLayer.wms(url, options);
+        layerRef.current = L.tileLayer.wms(url, options as L.WMSOptions);
       } else {
-        layerRef.current.setParams(options);
+        layerRef.current.setParams(options as L.WMSParams);
       }
       if (!map.hasLayer(layerRef.current)) {
         layerRef.current.addTo(map);
@@ -609,6 +740,7 @@ interface MapViewProps {
   previewOverlay?: { url: string; bounds: [[number, number], [number, number]] } | null;
   changePolygons: Feature | null;
   activeAoi: Feature | null;
+  monitoringAreas?: FeatureCollection | null;
   baseMapKey: string;
   onBaseMapChange: (key: string) => void;
   mapViewTarget: LatLngBoundsExpression | null;
@@ -625,12 +757,21 @@ interface MapViewProps {
   landCoverLayerUrl?: string | null;
   landCoverTrainingSamples?: FeatureCollection | null;
   landCoverDrawingEnabled?: boolean;
+  landCoverTrainingSamplesClearVersion?: number;
+  landCoverRefinementMode?: boolean;
   landCoverSelectedClassId?: number | null;
   onLandCoverSampleDrawComplete?: (geometry: Feature<Polygon>) => void;
   landCoverLayerVisible?: boolean;
   landCoverRefinementPolygon?: Feature | null;
   landCoverDrawingRefinementZone?: boolean;
+  landCoverRefinementClearVersion?: number;
   onLandCoverRefinementZoneDrawComplete?: (geometry: Feature<Polygon>) => void;
+  landCoverAiPolygons?: FeatureCollection | null;
+  landCoverAiPolygonsVersion?: number;
+  landCoverAiSelectedPolygonIds?: string[];
+  onLandCoverAIPolygonSelect?: (polygonId: string, additive: boolean) => void;
+  landCoverAiEditingPolygonId?: string | null;
+  onLandCoverAIPolygonGeometryEdit?: (polygonId: string, geometry: Polygon | MultiPolygon) => void;
   onAoiDeleted?: () => void;
   swipeCandidateLayers?: SwipeLayerDescriptor[];
 }
@@ -642,6 +783,7 @@ export default function MapView({
   previewOverlay = null,
   changePolygons,
   activeAoi,
+  monitoringAreas = null,
   baseMapKey,
   onBaseMapChange,
   mapViewTarget,
@@ -658,12 +800,21 @@ export default function MapView({
   landCoverLayerUrl = null,
   landCoverTrainingSamples = null,
   landCoverDrawingEnabled = false,
+  landCoverTrainingSamplesClearVersion = 0,
+  landCoverRefinementMode = false,
   landCoverSelectedClassId = null,
   onLandCoverSampleDrawComplete,
   landCoverLayerVisible = true,
   landCoverRefinementPolygon = null,
   landCoverDrawingRefinementZone = false,
+  landCoverRefinementClearVersion = 0,
   onLandCoverRefinementZoneDrawComplete,
+  landCoverAiPolygons = null,
+  landCoverAiPolygonsVersion = 0,
+  landCoverAiSelectedPolygonIds = [],
+  onLandCoverAIPolygonSelect,
+  landCoverAiEditingPolygonId = null,
+  onLandCoverAIPolygonGeometryEdit,
   onAoiDeleted,
   swipeCandidateLayers = [],
 }: MapViewProps) {
@@ -712,14 +863,16 @@ export default function MapView({
   }>({ pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 });
   const suggestionAbortRef = useRef<AbortController | null>(null);
   const suggestionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [activeInfoLayer, setActiveInfoLayer] = useState<'car' | 'mapbiomas' | null>(null);
+  const [activeInfoLayer, setActiveInfoLayer] = useState<'mapbiomas' | null>(null);
   const [visibleWmsLayers, setVisibleWmsLayers] = useState({
-    propriedades_rurais: false,
-    talhoes: false,
-    propriedades_car_sp: false,
     alertas_desmatamento_mapbiomas: false,
     ucs: false,
   });
+  const [tileLayerWarning, setTileLayerWarning] = useState<string | null>(null);
+
+  const handleTileLayerFailure = useCallback((message: string | null) => {
+    setTileLayerWarning(message);
+  }, []);
 
   const availableSwipeLayers = useMemo<SwipeLayerDescriptor[]>(() => {
     if (!activeAoi) return [];
@@ -738,17 +891,31 @@ export default function MapView({
       fallbackLayers.push(layer);
     };
 
-    swipeCandidateLayers.forEach(pushUnique);
+    swipeCandidateLayers.forEach((layer) => {
+      if (layer.kind === 'tile') {
+        pushUnique({
+          ...layer,
+          url: normalizeTileTemplateUrl(layer.url) || layer.url,
+        });
+        return;
+      }
+      pushUnique(layer);
+    });
     if (selectedLayers.length > 0) {
       return selectedLayers;
     }
 
-    if (previewLayerUrl) {
+    const normalizedPreviewLayerUrl = normalizeTileTemplateUrl(previewLayerUrl);
+    const normalizedVisibleLayerUrl = normalizeTileTemplateUrl(visibleLayerUrl);
+    const normalizedDifferenceLayerUrl = normalizeTileTemplateUrl(differenceLayerUrl);
+    const normalizedLandCoverLayerUrl = normalizeTileTemplateUrl(landCoverLayerUrl);
+
+    if (normalizedPreviewLayerUrl) {
       pushFallbackUnique({
-        id: makeLayerId('preview-tile', previewLayerUrl),
+        id: makeLayerId('preview-tile', normalizedPreviewLayerUrl),
         label: 'Pre-visualizacao',
         kind: 'tile',
-        url: previewLayerUrl,
+        url: normalizedPreviewLayerUrl,
         zIndex: previewLayerZIndex,
         opacity: 0.8,
         attribution: 'Pre-visualizacao',
@@ -767,24 +934,24 @@ export default function MapView({
       });
     }
 
-    if (visibleLayerUrl) {
+    if (normalizedVisibleLayerUrl) {
       pushFallbackUnique({
-        id: makeLayerId('index-layer', visibleLayerUrl),
+        id: makeLayerId('index-layer', normalizedVisibleLayerUrl),
         label: 'Indice Calculado',
         kind: 'tile',
-        url: visibleLayerUrl,
+        url: normalizedVisibleLayerUrl,
         zIndex: indexLayerZIndex,
         opacity: 0.8,
         attribution: 'Indice Calculado',
       });
     }
 
-    if (differenceLayerUrl) {
+    if (normalizedDifferenceLayerUrl) {
       pushFallbackUnique({
-        id: makeLayerId('difference-layer', differenceLayerUrl),
+        id: makeLayerId('difference-layer', normalizedDifferenceLayerUrl),
         label: 'Diferenca NDVI',
         kind: 'tile',
-        url: differenceLayerUrl,
+        url: normalizedDifferenceLayerUrl,
         zIndex: differenceLayerZIndex,
         opacity: 0.62,
         attribution: 'Diferenca NDVI',
@@ -792,12 +959,12 @@ export default function MapView({
       });
     }
 
-    if (landCoverLayerVisible && landCoverLayerUrl) {
+    if (landCoverLayerVisible && normalizedLandCoverLayerUrl) {
       pushFallbackUnique({
-        id: makeLayerId('landcover-layer', landCoverLayerUrl),
+        id: makeLayerId('landcover-layer', normalizedLandCoverLayerUrl),
         label: 'Classificacao Uso do Solo',
         kind: 'tile',
-        url: landCoverLayerUrl,
+        url: normalizedLandCoverLayerUrl,
         zIndex: 18,
         opacity: 0.72,
         attribution: 'LandCover',
@@ -825,6 +992,10 @@ export default function MapView({
   const isSwipeRenderActive = Boolean(swipe.isSwipeEnabled && swipeBottomLayer && swipeTopLayer);
 
   useEffect(() => {
+    const compactUrl = (url: string | null) => {
+      if (!url) return null;
+      return url.length > 180 ? `${url.slice(0, 180)}...<len:${url.length}>` : url;
+    };
     const bottomUrl =
       swipeBottomLayer && (swipeBottomLayer.kind === 'tile' || swipeBottomLayer.kind === 'imageOverlay')
         ? swipeBottomLayer.url
@@ -843,14 +1014,14 @@ export default function MapView({
       revealSide: swipe.revealSide,
       availableLayerIds: swipe.availableLayers.map((layer) => layer.id),
       availableLayerUrls: swipe.availableLayers.map((layer) =>
-        layer.kind === 'tile' || layer.kind === 'imageOverlay' ? layer.url : null
+        layer.kind === 'tile' || layer.kind === 'imageOverlay' ? compactUrl(layer.url) : null
       ),
       bottomLayerId: swipeBottomLayer?.id ?? null,
       topLayerId: swipeTopLayer?.id ?? null,
-      bottomLayerUrl: bottomUrl,
-      topLayerUrl: topUrl,
-      bottomLayerUrlNormalized: bottomNorm,
-      topLayerUrlNormalized: topNorm,
+      bottomLayerUrl: compactUrl(bottomUrl),
+      topLayerUrl: compactUrl(topUrl),
+      bottomLayerUrlNormalized: compactUrl(bottomNorm),
+      topLayerUrlNormalized: compactUrl(topNorm),
       hasAoi: Boolean(activeAoi),
     });
 
@@ -899,9 +1070,6 @@ export default function MapView({
 
   const handleWmsLayerToggle = (layerName: string, isVisible: boolean) => {
     if (!isVisible) {
-      if (layerName === 'propriedades_car_sp' && activeInfoLayer === 'car') {
-        setActiveInfoLayer(null);
-      }
       if (layerName === 'alertas_desmatamento_mapbiomas' && activeInfoLayer === 'mapbiomas') {
         setActiveInfoLayer(null);
       }
@@ -925,7 +1093,6 @@ export default function MapView({
 
     const selectedLayer = activeInfoLayer;
 
-    if (selectedLayer === 'car' && !visibleWmsLayers.propriedades_car_sp) return;
     if (selectedLayer === 'mapbiomas' && !visibleWmsLayers.alertas_desmatamento_mapbiomas) return;
 
     const map = mapRef.current;
@@ -967,17 +1134,7 @@ export default function MapView({
         if (data && data.features && data.features.length > 0) {
           const feature = data.features[0];
           const props = feature.properties;
-          const content = selectedLayer === 'car'
-            ? `
-              <div>
-                <h4>Informacoes do Imovel</h4>
-                <p><strong>Codigo:</strong> ${props.cod_imovel ?? '-'}</p>
-                <p><strong>Municipio:</strong> ${props.nom_munici ?? '-'}</p>
-                <p><strong>Area (ha):</strong> ${props.num_area ? parseFloat(props.num_area).toFixed(2) : '-'}</p>
-                <p><strong>Condicao:</strong> ${props.des_condic ?? '-'}</p>
-              </div>
-            `
-            : formatPropertiesForPopup(props, 'Alerta MapBiomas');
+          const content = formatPropertiesForPopup(props, 'Alerta MapBiomas');
 
           L.popup()
             .setLatLng(e.latlng)
@@ -992,9 +1149,8 @@ export default function MapView({
       })
       .catch(error => {
         console.error('Erro ao buscar GetFeatureInfo:', error);
-        const fallbackMessage = selectedLayer === 'mapbiomas'
-          ? 'Servico MapBiomas temporariamente indisponivel. Tente novamente em instantes.'
-          : 'Falha ao consultar informacoes da camada.';
+        const fallbackMessage =
+          'Servico MapBiomas temporariamente indisponivel. Tente novamente em instantes.';
         L.popup()
           .setLatLng(e.latlng)
           .setContent(`<div><p>${fallbackMessage}</p></div>`)
@@ -1156,12 +1312,12 @@ export default function MapView({
       const { nome, proprietario, id } = feature.properties;
       layer.bindPopup(
         `<b>${nome}</b>  
-         ProprietÃ¡rio: ${proprietario}  
+         ProprietÃƒÂ¡rio: ${proprietario}  
          <small>Clique para ver detalhes</small>`
       );
-      layer.on({
-        click: () => onPropertySelect(String(id))
-      });
+      if (typeof onPropertySelect === 'function') {
+        layer.on('click', () => onPropertySelect(String(id)));
+      }
     }
   };
 
@@ -1220,6 +1376,161 @@ export default function MapView({
       } as L.PathOptions),
     []
   );
+  const monitoringAreasStyle = useCallback((feature: Feature | undefined) => {
+    const areaType = String(feature?.properties?.tipo_area || '').toLowerCase();
+    if (areaType === 'app') {
+      return {
+        color: '#22c55e',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#22c55e',
+        fillOpacity: 0.12,
+        dashArray: '4 3',
+      } as L.PathOptions;
+    }
+    if (areaType === 'surroundings') {
+      return {
+        color: '#f59e0b',
+        weight: 2,
+        opacity: 0.9,
+        fillColor: '#f59e0b',
+        fillOpacity: 0.1,
+        dashArray: '5 4',
+      } as L.PathOptions;
+    }
+    return {
+      color: '#60a5fa',
+      weight: 2,
+      opacity: 0.9,
+      fillColor: '#93c5fd',
+      fillOpacity: 0.1,
+      dashArray: '4 3',
+    } as L.PathOptions;
+  }, []);
+
+  const aiPolygonLayersRef = useRef<Map<string, L.Layer>>(new Map());
+  const selectedAIPolygonIds = useMemo(
+    () => new Set(landCoverAiSelectedPolygonIds),
+    [landCoverAiSelectedPolygonIds]
+  );
+  const aiPolygonStyle = useCallback(
+    (feature: Feature | undefined) => {
+      const polygonId = String(feature?.properties?.polygon_id || '');
+      const status = String(feature?.properties?.status || 'suggested').toLowerCase();
+      const isSelected = selectedAIPolygonIds.has(polygonId);
+      const baseStyle: Record<string, L.PathOptions> = {
+        suggested: {
+          color: '#38bdf8',
+          fillColor: '#38bdf8',
+          fillOpacity: 0.14,
+          weight: 1.6,
+          opacity: 0.9,
+          dashArray: '4 3',
+          interactive: true,
+        },
+        approved: {
+          color: '#22c55e',
+          fillColor: '#22c55e',
+          fillOpacity: 0.16,
+          weight: 1.8,
+          opacity: 0.92,
+          interactive: true,
+        },
+        rejected: {
+          color: '#ef4444',
+          fillColor: '#ef4444',
+          fillOpacity: 0.09,
+          weight: 1.4,
+          opacity: 0.85,
+          dashArray: '6 4',
+          interactive: true,
+        },
+        edited: {
+          color: '#f59e0b',
+          fillColor: '#f59e0b',
+          fillOpacity: 0.16,
+          weight: 1.9,
+          opacity: 0.92,
+          interactive: true,
+        },
+      };
+      const style = baseStyle[status] || baseStyle.suggested;
+      if (!isSelected) return style;
+      return {
+        ...style,
+        weight: 3,
+        fillOpacity: 0.22,
+        opacity: 1,
+        interactive: true,
+      } as L.PathOptions;
+    },
+    [selectedAIPolygonIds]
+  );
+
+  const onEachAIPolygon = useCallback(
+    (feature: Feature, layer: Layer) => {
+      const polygonId = String(feature?.properties?.polygon_id || '');
+      if (!polygonId) return;
+      aiPolygonLayersRef.current.set(polygonId, layer);
+      const layerAny = layer as any;
+      if (layerAny?.options) {
+        layerAny.options.interactive = true;
+      }
+
+      const clickHandler = (event: any) => {
+        event?.originalEvent?.preventDefault?.();
+        event?.originalEvent?.stopPropagation?.();
+        const additive = Boolean(event?.originalEvent?.ctrlKey || event?.originalEvent?.metaKey);
+        onLandCoverAIPolygonSelect?.(polygonId, additive);
+      };
+      const editHandler = (event: any) => {
+        const editedGeoJson = event?.layer?.toGeoJSON?.() as Feature | undefined;
+        if (!editedGeoJson?.geometry) return;
+        if (editedGeoJson.geometry.type !== 'Polygon' && editedGeoJson.geometry.type !== 'MultiPolygon') return;
+        onLandCoverAIPolygonGeometryEdit?.(polygonId, editedGeoJson.geometry);
+      };
+
+      layer.on('click', clickHandler);
+      layer.on('pm:edit', editHandler);
+      (layer as any)?.bringToFront?.();
+      layer.once('remove', () => {
+        aiPolygonLayersRef.current.delete(polygonId);
+        layer.off('click', clickHandler);
+        layer.off('pm:edit', editHandler);
+      });
+    },
+    [onLandCoverAIPolygonGeometryEdit, onLandCoverAIPolygonSelect]
+  );
+
+  const handleAIPolygonGeoJsonClick = useCallback(
+    (event: any) => {
+      const feature =
+        event?.layer?.feature ||
+        event?.sourceTarget?.feature ||
+        event?.propagatedFrom?.feature ||
+        null;
+      const polygonId = String(feature?.properties?.polygon_id || '');
+      if (!polygonId) return;
+      const additive = Boolean(event?.originalEvent?.ctrlKey || event?.originalEvent?.metaKey);
+      onLandCoverAIPolygonSelect?.(polygonId, additive);
+    },
+    [onLandCoverAIPolygonSelect]
+  );
+
+  useEffect(() => {
+    aiPolygonLayersRef.current.forEach((layer, polygonId) => {
+      const editableLayer = layer as any;
+      if (!editableLayer?.pm) return;
+      if (landCoverAiEditingPolygonId && landCoverAiEditingPolygonId === polygonId) {
+        editableLayer.pm.enable({
+          allowSelfIntersection: false,
+          allowEditing: true,
+        });
+      } else {
+        editableLayer.pm.disable();
+      }
+    });
+  }, [landCoverAiEditingPolygonId, landCoverAiPolygonsVersion]);
 
   const mapbiomasWmsOptions = useMemo(
     () =>
@@ -1556,19 +1867,17 @@ export default function MapView({
             {searchError}
           </div>
         )}
+        {tileLayerWarning && (
+          <div style={{ marginTop: '6px', fontSize: '12px', color: '#b42318' }}>
+            {tileLayerWarning}
+          </div>
+        )}
       </div>
       <div style={{ position: 'absolute', top: '90px', right: '10px', zIndex: 999 }}>
         <LayerControl onLayerToggle={handleWmsLayerToggle} initialState={visibleWmsLayers} />
       </div>
       
       <div style={{ position: 'absolute', top: '260px', right: '10px', zIndex: 1200, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {visibleWmsLayers.propriedades_car_sp && (
-          <InfoTool
-            onClick={() => setActiveInfoLayer(prev => prev === 'car' ? null : 'car')}
-            isActive={activeInfoLayer === 'car'}
-            title="Consultar informacoes da camada CAR (clique e depois no mapa)"
-          />
-        )}
         {visibleWmsLayers.alertas_desmatamento_mapbiomas && (
           <InfoTool
             onClick={() => setActiveInfoLayer(prev => prev === 'mapbiomas' ? null : 'mapbiomas')}
@@ -1596,24 +1905,42 @@ export default function MapView({
           isDrawingTalhao={isDrawingTalhao}
           onTalhaoDrawComplete={onTalhaoDrawComplete}
           isDrawingLandCoverSample={landCoverDrawingEnabled}
+          trainingSamplesClearVersion={landCoverTrainingSamplesClearVersion}
+          isLandCoverRefinementMode={landCoverRefinementMode}
           landCoverSelectedClassId={landCoverSelectedClassId}
           onLandCoverSampleDrawComplete={onLandCoverSampleDrawComplete}
           isDrawingLandCoverRefinementZone={landCoverDrawingRefinementZone}
           onLandCoverRefinementZoneDrawComplete={onLandCoverRefinementZoneDrawComplete}
+          refinementClearVersion={landCoverRefinementClearVersion}
           onAoiDeleted={onAoiDeleted}
+          isEditingLandCoverAIPolygon={Boolean(landCoverAiEditingPolygonId)}
         />
         <AoiAreaLabel aoi={activeAoi} />
         
         {!isSwipeRenderActive ? (
           <>
-            <DynamicTileLayer url={visibleLayerUrl} zIndex={indexLayerZIndex} attribution="Indice Calculado" />
+            <DynamicTileLayer
+              url={visibleLayerUrl}
+              zIndex={indexLayerZIndex}
+              attribution="Indice Calculado"
+              layerLabel="Indice calculado"
+              onLayerFailure={handleTileLayerFailure}
+            />
             <DynamicTileLayer
               url={landCoverLayerVisible ? landCoverLayerUrl || null : null}
               zIndex={18}
               opacity={0.72}
               attribution="LandCover"
+              layerLabel="Classificacao de uso do solo"
+              onLayerFailure={handleTileLayerFailure}
             />
-            <DynamicTileLayer url={previewLayerUrl} zIndex={previewLayerZIndex} attribution="Pre-visualizacao" />
+            <DynamicTileLayer
+              url={previewLayerUrl}
+              zIndex={previewLayerZIndex}
+              attribution="Pre-visualizacao"
+              layerLabel="Pre-visualizacao"
+              onLayerFailure={handleTileLayerFailure}
+            />
             <DynamicImageOverlay overlay={previewOverlay} zIndex={previewLayerZIndex} />
             <DynamicTileLayer
               url={differenceLayerUrl}
@@ -1621,6 +1948,8 @@ export default function MapView({
               opacity={0.62}
               attribution="Diferenca NDVI"
               className="difference-tile-soft"
+              layerLabel="Diferenca NDVI"
+              onLayerFailure={handleTileLayerFailure}
             />
           </>
         ) : (
@@ -1647,19 +1976,6 @@ export default function MapView({
         )}
 
         <WmsLayer
-          url="http://localhost:8080/geoserver/imagens_satelite/wms"
-          options={{ layers: 'imagens_satelite:propriedades_rurais', format: 'image/png', transparent: true, zIndex: 450 }}
-          visible={visibleWmsLayers.propriedades_rurais}
-          layerName="propriedades_rurais"
-        />
-        <WmsLayer
-          url="http://localhost:8080/geoserver/imagens_satelite/wms"
-          options={{ layers: 'imagens_satelite:talhoes', format: 'image/png', transparent: true, zIndex: 460 }}
-          visible={visibleWmsLayers.talhoes}
-          layerName="talhoes"
-        />
-        <CarClassifiedLayer visible={visibleWmsLayers.propriedades_car_sp} />
-         <WmsLayer
           url="http://localhost:8080/geoserver/imagens_satelite/wms" // <-- Altere o workspace
           options={{
             layers: 'imagens_satelite:ucs', // <-- Altere o nome completo da camada
@@ -1692,6 +2008,25 @@ export default function MapView({
             style={refinementZoneStyle}
           />
         )}
+        {landCoverAiPolygons && landCoverAiPolygons.features.length > 0 && (
+          <Pane name="landcover-ai-editor-pane" style={{ zIndex: 690, pointerEvents: 'auto' }}>
+            <GeoJSON
+              key={`ai-polygons-${landCoverAiPolygonsVersion}`}
+              data={landCoverAiPolygons as any}
+              style={aiPolygonStyle}
+              onEachFeature={onEachAIPolygon}
+              pane="landcover-ai-editor-pane"
+              eventHandlers={{ click: handleAIPolygonGeoJsonClick }}
+            />
+          </Pane>
+        )}
+        {monitoringAreas && monitoringAreas.features.length > 0 && (
+          <GeoJSON
+            key={JSON.stringify(monitoringAreas)}
+            data={monitoringAreas as any}
+            style={monitoringAreasStyle}
+          />
+        )}
         {activeAoi && <GeoJSON key={JSON.stringify(activeAoi )} data={activeAoi} style={aoiStyle} />}
         {propertiesData && <GeoJSON data={propertiesData} onEachFeature={onEachProperty} />}
         
@@ -1710,9 +2045,11 @@ export default function MapView({
           {showFirmsPoints ? 'Ocultar FIRMS' : 'Mostrar FIRMS'}
         </button>
         <button className="map-layer-button precipitation" onClick={() => setShowPrecipitation(p => !p)}>
-          {showPrecipitation ? 'Ocultar PrecipitaÃ§Ã£o' : 'Mostrar PrecipitaÃ§Ã£o'}
+          {showPrecipitation ? 'Ocultar PrecipitaÃƒÂ§ÃƒÂ£o' : 'Mostrar PrecipitaÃƒÂ§ÃƒÂ£o'}
         </button>
       </div>
     </div>
   );
 }
+
+

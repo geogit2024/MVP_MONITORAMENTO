@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+﻿import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import L, { LatLngBoundsExpression } from 'leaflet';
-import { Feature, FeatureCollection } from 'geojson';
-import type { Property } from './components/SidebarCadastro';
+import { Feature, FeatureCollection, Geometry, Polygon, MultiPolygon } from 'geojson';
+import type { Property } from './types/property';
+import type { ImageInfo } from './types/image';
 import SidebarTerritorial from './components/Sidebar';
 import SidebarClima from './components/SidebarClima';
 import SidebarResizeHandle from './components/SidebarResizeHandle';
@@ -18,19 +19,27 @@ import Globe3D from './modules/map3d/Globe3D';
 import ModeToggle from './modules/map3d/ModeToggle';
 import { useMapMode } from './modules/map3d/MapModeContext';
 import LandCoverPanel from './modules/landcover/LandCoverPanel';
-import type { LandCoverClassifyResponse } from './modules/landcover/types';
-import { refineLandCoverClassification } from './modules/landcover/ClassificationLayer';
+import type {
+    LandCoverClassDef,
+    LandCoverClassifyResponse,
+    LandCoverPolygonStatus,
+    LandCoverAIPolygonProperties,
+} from './modules/landcover/types';
+import {
+    classifyLandCoverPolygons,
+    refineLandCoverClassification,
+    vectorizeLandCoverAI,
+} from './modules/landcover/ClassificationLayer';
 import useResizableSidebar from './hooks/useResizableSidebar';
 import type { SwipeLayerDescriptor } from './modules/swipe/types';
+import { featureCollection as turfFeatureCollection, union as turfUnion } from '@turf/turf';
 
 import './App.css';
 import togeojson from '@mapbox/togeojson';
 import JSZip from 'jszip';
 
 
-// --- DEFINIÇÃO DE TIPOS E INTERFACES ---
-export interface ImageInfo { id: string; date: string; thumbnailUrl: string; }
-
+// --- DEFINIÃ‡ÃƒO DE TIPOS E INTERFACES ---
 export interface NdviAreas {
   area_agua: number;
   area_solo_exposto: number;
@@ -71,7 +80,7 @@ export interface NdreAreas {
 export interface IndexResult {
     indexName: string;
     imageUrl: string;
-    downloadUrl: string;
+    downloadUrl?: string | null;
     classification?: NdviAreas | SaviAreas | MsaviAreas | NdreAreas;
 }
 
@@ -133,6 +142,8 @@ const DEFAULT_SIDEBAR_WIDTH = 380;
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 720;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'app.sidebar.width';
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'app.sidebar.collapsed';
+const COLLAPSED_SIDEBAR_WIDTH = 44;
 const DESKTOP_SIDEBAR_BREAKPOINT = 900;
 
 const Notification: React.FC<NotificationProps> = ({ message, type, onDismiss }) => {
@@ -160,7 +171,7 @@ const loadHtml2Canvas = async (): Promise<any> => {
             script.onload = () => {
                 const loaded = (window as any).html2canvas;
                 if (loaded) resolve(loaded);
-                else reject(new Error('html2canvas carregou, mas não ficou disponível em window.'));
+                else reject(new Error('html2canvas carregou, mas nÃ£o ficou disponÃ­vel em window.'));
             };
             script.onerror = () => reject(new Error('Falha ao carregar html2canvas via CDN.'));
             document.head.appendChild(script);
@@ -279,6 +290,7 @@ export default function MainApplication() {
         type: 'FeatureCollection',
         features: [],
     });
+    const [landCoverTrainingSamplesClearVersion, setLandCoverTrainingSamplesClearVersion] = useState(0);
     const [landCoverSelectedClassId, setLandCoverSelectedClassId] = useState<number>(1);
     const [landCoverDrawingEnabled, setLandCoverDrawingEnabled] = useState(false);
     const [landCoverLayerUrl, setLandCoverLayerUrl] = useState<string | null>(null);
@@ -293,11 +305,40 @@ export default function MainApplication() {
         features: [],
     });
     const [landCoverDrawingRefinementZone, setLandCoverDrawingRefinementZone] = useState(false);
+    const [landCoverRefinementClearVersion, setLandCoverRefinementClearVersion] = useState(0);
+    const [landCoverAdvancedMode, setLandCoverAdvancedMode] = useState(false);
+    const [landCoverAiVectorizationId, setLandCoverAiVectorizationId] = useState<string | null>(null);
+    const [landCoverAiPolygons, setLandCoverAiPolygons] = useState<FeatureCollection<Geometry, LandCoverAIPolygonProperties>>({
+        type: 'FeatureCollection',
+        features: [],
+    });
+    const [landCoverAiPolygonsVersion, setLandCoverAiPolygonsVersion] = useState(0);
+    const [landCoverAiVisibleStatuses, setLandCoverAiVisibleStatuses] = useState<LandCoverPolygonStatus[]>([
+        'suggested',
+        'approved',
+        'rejected',
+        'edited',
+    ]);
+    const [landCoverAiSelectedPolygonIds, setLandCoverAiSelectedPolygonIds] = useState<string[]>([]);
+    const [landCoverAiEditingPolygonId, setLandCoverAiEditingPolygonId] = useState<string | null>(null);
+    const [landCoverAiVectorizeLoading, setLandCoverAiVectorizeLoading] = useState(false);
+    const [landCoverAiClassifyLoading, setLandCoverAiClassifyLoading] = useState(false);
+    const [landCoverAiVectorizationSummary, setLandCoverAiVectorizationSummary] = useState<{
+        total_polygons: number;
+        total_area_ha: number;
+        min_area_ha: number;
+        max_area_ha: number;
+    } | null>(null);
     const [selectedCarouselSwipeLayers, setSelectedCarouselSwipeLayers] = useState<SwipeLayerDescriptor[]>([]);
     const previewTileCacheRef = useRef<Record<string, PreviewLayerData>>({});
+    const [isToolsBarVisible, setIsToolsBarVisible] = useState(false);
     const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(
         typeof window === 'undefined' ? true : window.innerWidth > DESKTOP_SIDEBAR_BREAKPOINT
     );
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+        if (typeof window === 'undefined') return false;
+        return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+    });
     const {
         width: sidebarWidth,
         isResizing: isSidebarResizing,
@@ -308,10 +349,11 @@ export default function MainApplication() {
         maxWidth: MAX_SIDEBAR_WIDTH,
         storageKey: SIDEBAR_WIDTH_STORAGE_KEY,
     });
+    const isSidebarActuallyCollapsed = isDesktopLayout && isSidebarCollapsed;
 
     useEffect(() => {
         const virtualIndexItems: ImageInfo[] = calculatedIndices.map(index => ({ id: `index-${index.indexName}`, date: index.indexName, thumbnailUrl: INDEX_LAYER_ICON_URI }));
-        const virtualChangeItem: ImageInfo[] = changePolygons ? [{ id: CHANGE_LAYER_ID, date: 'Detecção de Mudança', thumbnailUrl: CHANGE_LAYER_ICON_URI }] : [];
+        const virtualChangeItem: ImageInfo[] = changePolygons ? [{ id: CHANGE_LAYER_ID, date: 'DetecÃ§Ã£o de MudanÃ§a', thumbnailUrl: CHANGE_LAYER_ICON_URI }] : [];
         const items = [...virtualChangeItem, ...virtualIndexItems, ...apiImages];
         setCarouselItems(items);
     }, [apiImages, changePolygons, calculatedIndices]);
@@ -329,6 +371,35 @@ export default function MainApplication() {
         if (selectableImageIds.length === 0) return false;
         return selectableImageIds.every((id) => selectedImageIds.includes(id));
     }, [selectableImageIds, selectedImageIds]);
+
+    const landCoverAiStatsByStatus = useMemo<Record<LandCoverPolygonStatus, number>>(() => {
+        const initial: Record<LandCoverPolygonStatus, number> = {
+            suggested: 0,
+            approved: 0,
+            rejected: 0,
+            edited: 0,
+        };
+        for (const feature of landCoverAiPolygons.features) {
+            const rawStatus = String(feature.properties?.status || 'suggested').toLowerCase() as LandCoverPolygonStatus;
+            if (rawStatus in initial) {
+                initial[rawStatus] += 1;
+            } else {
+                initial.suggested += 1;
+            }
+        }
+        return initial;
+    }, [landCoverAiPolygons.features]);
+
+    const visibleLandCoverAiPolygons = useMemo<FeatureCollection<Geometry, LandCoverAIPolygonProperties>>(() => {
+        const visible = new Set(landCoverAiVisibleStatuses);
+        return {
+            type: 'FeatureCollection',
+            features: landCoverAiPolygons.features.filter((feature) => {
+                const status = String(feature.properties?.status || 'suggested').toLowerCase() as LandCoverPolygonStatus;
+                return visible.has(status);
+            }),
+        };
+    }, [landCoverAiPolygons, landCoverAiVisibleStatuses]);
 
     const showNotification = useCallback((message: string, type: 'error' | 'success') => { setNotification({ message, type }); }, []);
     
@@ -353,22 +424,32 @@ export default function MainApplication() {
         setLandCoverRefinementPolygon(null);
         setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
         setLandCoverDrawingRefinementZone(false);
+        setLandCoverAdvancedMode(false);
+        setLandCoverAiVectorizationId(null);
+        setLandCoverAiPolygons({ type: 'FeatureCollection', features: [] });
+        setLandCoverAiPolygonsVersion((prev) => prev + 1);
+        setLandCoverAiSelectedPolygonIds([]);
+        setLandCoverAiEditingPolygonId(null);
+        setLandCoverAiVisibleStatuses(['suggested', 'approved', 'rejected', 'edited']);
+        setLandCoverAiVectorizationSummary(null);
+        setLandCoverAiVectorizeLoading(false);
+        setLandCoverAiClassifyLoading(false);
     }, []);
 
     const setAoiAndZoom = useCallback((feature: Feature) => {
         if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
             setActiveAoi(feature);
             setMapViewTarget(L.geoJSON(feature).getBounds());
-            showNotification("Área de Interesse definida!", "success");
+            showNotification("Ãrea de Interesse definida!", "success");
         } else {
-            showNotification("Nenhum polígono válido encontrado.", "error");
+            showNotification("Nenhum polÃ­gono vÃ¡lido encontrado.", "error");
         }
     }, [showNotification]);
 
 
 
     const handleSearchImages = useCallback(async (geometry: Feature['geometry']) => {
-        if (!satellite) { showNotification('Selecione um satélite.', 'error'); return; }
+        if (!satellite) { showNotification('Selecione um satÃ©lite.', 'error'); return; }
         setLoadingState('searching');
         setSelectedImageIds([]);
         setIsCarouselVisible(true);
@@ -399,17 +480,17 @@ export default function MainApplication() {
             return;
         }
         if (selectedIndices.length === 0) {
-            showNotification("Selecione pelo menos um índice para calcular.", "error");
+            showNotification("Selecione pelo menos um Ã­ndice para calcular.", "error");
             return;
         }
 
         if (selectedIndices.includes('Red-Edge NDVI') && satellite.startsWith('LANDSAT')) {
-            showNotification('Red-Edge NDVI só pode ser calculado para satélites Sentinel-2.', 'error');
+            showNotification('Red-Edge NDVI sÃ³ pode ser calculado para satÃ©lites Sentinel-2.', 'error');
             return;
         }
 
         setLoadingState('calculating');
-        // Limpa painéis antigos antes de calcular novos para evitar mostrar dados de análises passadas
+        // Limpa painÃ©is antigos antes de calcular novos para evitar mostrar dados de anÃ¡lises passadas
         setNdviAreas(null);
         setSaviResult(null);
         setMsaviResult(null);
@@ -418,7 +499,7 @@ export default function MainApplication() {
         try {
             const imageId = selectedImageIds[0];
             const res = await fetch(`${API_BASE_URL}/api/earth-images/indices`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageId, satellite, polygon: activeAoi.geometry, indices: selectedIndices }) });
-            if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao calcular os índices"); }
+            if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao calcular os Ã­ndices"); }
             
             const data: { results: IndexResult[], bounds: LatLngBoundsExpression } = await res.json();
             
@@ -426,7 +507,7 @@ export default function MainApplication() {
                 setCalculatedIndices(data.results);
                 setVisibleLayerUrl(data.results[0].imageUrl);
                 setMapViewTarget(data.bounds);
-                showNotification(`${data.results.length} índice(s) calculado(s)!`, "success");
+                showNotification(`${data.results.length} Ã­ndice(s) calculado(s)!`, "success");
 
                 data.results.forEach(result => {
                     switch(result.indexName.toUpperCase()) {
@@ -463,10 +544,10 @@ export default function MainApplication() {
                 });
 
             } else {
-                throw new Error("A API não retornou resultados para os índices solicitados.");
+                throw new Error("A API nÃ£o retornou resultados para os Ã­ndices solicitados.");
             }
         } catch (error: any) {
-            showNotification(error.message || "Erro ao calcular os índices.", "error");
+            showNotification(error.message || "Erro ao calcular os Ã­ndices.", "error");
             resetAnalysisLayers();
         } finally {
             setLoadingState('idle');
@@ -665,8 +746,8 @@ export default function MainApplication() {
     }, [timelinePlaying, timelineImages.length, timelineSpeedMs, showTimelineFrame]);
 
     const handleDetectChange = useCallback(async () => {
-        if (selectedImageIds.length !== 2) { showNotification("Selecione exatamente duas imagens para a detecção de mudança.", "error"); return; }
-        if (!activeAoi) { showNotification("Defina uma Área de Interesse (AOI) primeiro.", "error"); return; }
+        if (selectedImageIds.length !== 2) { showNotification("Selecione exatamente duas imagens para a detecÃ§Ã£o de mudanÃ§a.", "error"); return; }
+        if (!activeAoi) { showNotification("Defina uma Ãrea de Interesse (AOI) primeiro.", "error"); return; }
         setLoadingState('detectingChange');
         setPreviewLayerUrl(null);
         setVisibleLayerUrl(null);
@@ -674,7 +755,7 @@ export default function MainApplication() {
             const imageDateMap = new Map(apiImages.map(img => [img.id, new Date(img.date.split('/').reverse().join('-'))]));
             const sortedSelectedIds = [...selectedImageIds].sort((a, b) => (imageDateMap.get(a)?.getTime() || 0) - (imageDateMap.get(b)?.getTime() || 0));
             const res = await fetch(`${API_BASE_URL}/api/earth-images/change-detection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ beforeImageId: sortedSelectedIds[0], afterImageId: sortedSelectedIds[1], satellite, polygon: activeAoi.geometry, threshold: changeThreshold }) });
-            if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao detectar mudanças"); }
+            if (!res.ok) { const err = await res.json(); throw new Error(err.detail || "Falha ao detectar mudanÃ§as"); }
             const data = await res.json();
             setDifferenceLayerUrl(data.differenceImageUrl);
             
@@ -687,13 +768,13 @@ export default function MainApplication() {
             if (data.changeGeoJson && data.changeGeoJson.features.length > 0) {
                 setChangePolygons(data.changeGeoJson);
                 setIsChangeLayerVisible(true);
-                showNotification("Detecção de mudança concluída!", "success");
+                showNotification("DetecÃ§Ã£o de mudanÃ§a concluÃ­da!", "success");
             } else {
                 setChangePolygons(null);
-                showNotification("Nenhuma mudança significativa foi detectada.", "error");
+                showNotification("Nenhuma mudanÃ§a significativa foi detectada.", "error");
             }
         } catch (error: any) {
-            showNotification(error.message || "Ocorreu um erro ao detectar as mudanças.", "error");
+            showNotification(error.message || "Ocorreu um erro ao detectar as mudanÃ§as.", "error");
         } finally {
             setLoadingState('idle');
         }
@@ -718,7 +799,7 @@ export default function MainApplication() {
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(link.href);
-            showNotification("Download concluído com sucesso!", "success");
+            showNotification("Download concluÃ­do com sucesso!", "success");
         } catch (error: any) {
             console.error("Erro no download em massa:", error);
             showNotification(error.message || "Ocorreu um erro durante o download.", "error");
@@ -746,11 +827,11 @@ export default function MainApplication() {
             if (polygonFeature) {
                 setAoiAndZoom(polygonFeature);
             } else {
-                showNotification('Nenhum polígono válido foi encontrado no arquivo KML.', 'error');
+                showNotification('Nenhum polÃ­gono vÃ¡lido foi encontrado no arquivo KML.', 'error');
             }
         } catch (error: any) {
             console.error("Erro ao processar arquivo KML/KMZ:", error);
-            showNotification(error.message || 'Não foi possível processar o arquivo.', 'error');
+            showNotification(error.message || 'NÃ£o foi possÃ­vel processar o arquivo.', 'error');
         } finally {
             setLoadingState('idle');
         }
@@ -778,9 +859,23 @@ export default function MainApplication() {
         }));
     }, [landCoverSelectedClassId, landCoverRefinementMode]);
 
+    const handleLandCoverTrainingSamplesChange = useCallback((featureCollection: FeatureCollection) => {
+        setLandCoverTrainingSamples(featureCollection);
+        if ((featureCollection.features || []).length === 0) {
+            setLandCoverTrainingSamplesClearVersion((prev) => prev + 1);
+        }
+    }, []);
+
     const handleLandCoverRefinementZoneDrawComplete = useCallback((feature: Feature) => {
         setLandCoverRefinementPolygon(feature);
         setLandCoverDrawingRefinementZone(false);
+    }, []);
+
+    const handleClearRefinement = useCallback(() => {
+        setLandCoverRefinementPolygon(null);
+        setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
+        setLandCoverDrawingRefinementZone(false);
+        setLandCoverRefinementClearVersion((prev) => prev + 1);
     }, []);
 
     const handleLandCoverResult = useCallback((result: LandCoverClassifyResponse) => {
@@ -833,6 +928,314 @@ export default function MainApplication() {
         }
         await handleRefineLandCover(landCoverRefinementPolygon, landCoverRefinementSamples);
     }, [landCoverRefinementPolygon, landCoverRefinementSamples, handleRefineLandCover, showNotification]);
+
+    const setLandCoverAiPolygonsWithVersion = useCallback(
+        (collection: FeatureCollection<Geometry, LandCoverAIPolygonProperties>) => {
+            setLandCoverAiPolygons(collection);
+            setLandCoverAiPolygonsVersion((prev) => prev + 1);
+        },
+        []
+    );
+
+    const normalizeAIPolygonCollection = useCallback(
+        (
+            collection: FeatureCollection<Geometry, LandCoverAIPolygonProperties>
+        ): FeatureCollection<Geometry, LandCoverAIPolygonProperties> => {
+            const normalizedFeatures = collection.features
+                .filter((feature): feature is Feature<Geometry, LandCoverAIPolygonProperties> => {
+                    return (
+                        feature?.geometry?.type === 'Polygon' ||
+                        feature?.geometry?.type === 'MultiPolygon'
+                    );
+                })
+                .map((feature, index) => {
+                    const props = feature.properties || {};
+                    const polygonId = String(props.polygon_id || `ai-poly-${index + 1}`);
+                    const rawStatus = String(props.status || 'suggested').toLowerCase();
+                    const status: LandCoverPolygonStatus = (
+                        rawStatus === 'approved' ||
+                        rawStatus === 'rejected' ||
+                        rawStatus === 'edited'
+                            ? rawStatus
+                            : 'suggested'
+                    );
+                    return {
+                        ...feature,
+                        properties: {
+                            ...props,
+                            polygon_id: polygonId,
+                            status,
+                        },
+                    };
+                });
+            return {
+                type: 'FeatureCollection',
+                features: normalizedFeatures,
+            };
+        },
+        []
+    );
+
+    const updateAIPolygonByIds = useCallback(
+        (polygonIds: string[], updater: (feature: Feature<Geometry, LandCoverAIPolygonProperties>) => Feature<Geometry, LandCoverAIPolygonProperties> | null) => {
+            const selectedSet = new Set(polygonIds);
+            const nextFeatures: Feature<Geometry, LandCoverAIPolygonProperties>[] = [];
+            landCoverAiPolygons.features.forEach((feature) => {
+                const id = String(feature.properties?.polygon_id || '');
+                if (selectedSet.has(id)) {
+                    const updated = updater(feature);
+                    if (updated) nextFeatures.push(updated);
+                } else {
+                    nextFeatures.push(feature);
+                }
+            });
+            setLandCoverAiPolygonsWithVersion({
+                type: 'FeatureCollection',
+                features: nextFeatures,
+            });
+        },
+        [landCoverAiPolygons.features, setLandCoverAiPolygonsWithVersion]
+    );
+
+    const handleGenerateAIVectorization = useCallback(
+        async (params: {
+            segmentSize: number;
+            compactness: number;
+            connectivity: 4 | 8;
+            minAreaHa: number;
+            simplifyMeters: number;
+            maxSegments: number;
+        }) => {
+            if (!activeAoi) {
+                showNotification('Defina uma AOI antes de gerar a vetorizacao AI.', 'error');
+                return;
+            }
+            try {
+                setLandCoverAiVectorizeLoading(true);
+                const response = await vectorizeLandCoverAI({
+                    aoiGeometry: activeAoi.geometry,
+                    dateStart: dateFrom,
+                    dateEnd: dateTo,
+                    segmentSize: params.segmentSize,
+                    compactness: params.compactness,
+                    connectivity: params.connectivity,
+                    minAreaHa: params.minAreaHa,
+                    simplifyMeters: params.simplifyMeters,
+                    maxSegments: params.maxSegments,
+                });
+                const normalized = normalizeAIPolygonCollection(response.polygons);
+                setLandCoverAdvancedMode(true);
+                setLandCoverAiVectorizationId(response.vectorization_id);
+                setLandCoverAiVectorizationSummary(response.summary);
+                setLandCoverAiSelectedPolygonIds([]);
+                setLandCoverAiEditingPolygonId(null);
+                setLandCoverAiVisibleStatuses(['suggested', 'approved', 'rejected', 'edited']);
+                setLandCoverAiPolygonsWithVersion(normalized);
+                showNotification(
+                    `Vetorizacao AI concluida: ${response.summary.total_polygons} poligonos gerados.`,
+                    'success'
+                );
+            } catch (error: any) {
+                showNotification(error.message || 'Falha ao gerar vetorizacao AI.', 'error');
+            } finally {
+                setLandCoverAiVectorizeLoading(false);
+            }
+        },
+        [
+            activeAoi,
+            dateFrom,
+            dateTo,
+            normalizeAIPolygonCollection,
+            setLandCoverAiPolygonsWithVersion,
+            showNotification,
+        ]
+    );
+
+    const handleSelectAIPolygon = useCallback((polygonId: string, additive: boolean) => {
+        setLandCoverAiSelectedPolygonIds((prev) => {
+            if (!additive) return [polygonId];
+            if (prev.includes(polygonId)) return prev.filter((id) => id !== polygonId);
+            return [...prev, polygonId];
+        });
+    }, []);
+
+    const handleApproveSelectedAIPolygons = useCallback(() => {
+        if (landCoverAiSelectedPolygonIds.length === 0) return;
+        updateAIPolygonByIds(landCoverAiSelectedPolygonIds, (feature) => ({
+            ...feature,
+            properties: {
+                ...(feature.properties || {}),
+                status: 'approved',
+            },
+        }));
+        setLandCoverAiEditingPolygonId(null);
+    }, [landCoverAiSelectedPolygonIds, updateAIPolygonByIds]);
+
+    const handleRejectSelectedAIPolygons = useCallback(() => {
+        if (landCoverAiSelectedPolygonIds.length === 0) return;
+        updateAIPolygonByIds(landCoverAiSelectedPolygonIds, (feature) => ({
+            ...feature,
+            properties: {
+                ...(feature.properties || {}),
+                status: 'rejected',
+            },
+        }));
+        setLandCoverAiEditingPolygonId(null);
+    }, [landCoverAiSelectedPolygonIds, updateAIPolygonByIds]);
+
+    const handleDeleteSelectedAIPolygons = useCallback(() => {
+        if (landCoverAiSelectedPolygonIds.length === 0) return;
+        updateAIPolygonByIds(landCoverAiSelectedPolygonIds, () => null);
+        setLandCoverAiSelectedPolygonIds([]);
+        setLandCoverAiEditingPolygonId(null);
+    }, [landCoverAiSelectedPolygonIds, updateAIPolygonByIds]);
+
+    const handleMergeSelectedAIPolygons = useCallback(() => {
+        const selectedSet = new Set(landCoverAiSelectedPolygonIds);
+        if (selectedSet.size < 2) {
+            showNotification('Selecione ao menos 2 poligonos para uniao.', 'error');
+            return;
+        }
+
+        const selectedFeatures = landCoverAiPolygons.features.filter((feature) =>
+            selectedSet.has(String(feature.properties?.polygon_id || ''))
+        );
+        if (selectedFeatures.length < 2) {
+            showNotification('Nao foi possivel localizar os poligonos selecionados para uniao.', 'error');
+            return;
+        }
+
+        try {
+            let merged = selectedFeatures[0] as any;
+            for (let index = 1; index < selectedFeatures.length; index += 1) {
+                const unionResult = turfUnion(
+                    turfFeatureCollection([merged as any, selectedFeatures[index] as any]) as any
+                );
+                if (!unionResult) {
+                    throw new Error('Falha ao unir geometrias selecionadas.');
+                }
+                merged = unionResult;
+            }
+
+            const mergedGeometry = merged.geometry as Geometry;
+            if (mergedGeometry.type !== 'Polygon' && mergedGeometry.type !== 'MultiPolygon') {
+                throw new Error('A geometria unificada nao eh valida para classificacao.');
+            }
+
+            const newPolygonId = `ai-merge-${Date.now()}`;
+            const mergedFeature: Feature<Geometry, LandCoverAIPolygonProperties> = {
+                type: 'Feature',
+                geometry: mergedGeometry,
+                properties: {
+                    polygon_id: newPolygonId,
+                    status: 'edited',
+                },
+            };
+
+            const remaining = landCoverAiPolygons.features.filter(
+                (feature) => !selectedSet.has(String(feature.properties?.polygon_id || ''))
+            );
+            const nextCollection: FeatureCollection<Geometry, LandCoverAIPolygonProperties> = {
+                type: 'FeatureCollection',
+                features: [...remaining, mergedFeature],
+            };
+            setLandCoverAiPolygonsWithVersion(nextCollection);
+            setLandCoverAiSelectedPolygonIds([newPolygonId]);
+            setLandCoverAiEditingPolygonId(null);
+            showNotification('Poligonos unidos com sucesso.', 'success');
+        } catch (error: any) {
+            showNotification(error.message || 'Falha ao unir poligonos selecionados.', 'error');
+        }
+    }, [
+        landCoverAiPolygons.features,
+        landCoverAiSelectedPolygonIds,
+        setLandCoverAiPolygonsWithVersion,
+        showNotification,
+    ]);
+
+    const handleToggleEditSelectedAIPolygon = useCallback(() => {
+        if (landCoverAiSelectedPolygonIds.length !== 1) {
+            showNotification('Selecione exatamente 1 poligono para editar vertices.', 'error');
+            return;
+        }
+        const selectedId = landCoverAiSelectedPolygonIds[0];
+        setLandCoverAiEditingPolygonId((prev) => (prev === selectedId ? null : selectedId));
+    }, [landCoverAiSelectedPolygonIds, showNotification]);
+
+    const handleAIPolygonGeometryEdit = useCallback(
+        (polygonId: string, geometry: Polygon | MultiPolygon) => {
+            updateAIPolygonByIds([polygonId], (feature) => ({
+                ...feature,
+                geometry,
+                properties: {
+                    ...(feature.properties || {}),
+                    status: 'edited',
+                },
+            }));
+        },
+        [updateAIPolygonByIds]
+    );
+
+    const handleResetAIVectorization = useCallback(() => {
+        setLandCoverAiVectorizationId(null);
+        setLandCoverAiSelectedPolygonIds([]);
+        setLandCoverAiEditingPolygonId(null);
+        setLandCoverAiVectorizationSummary(null);
+        setLandCoverAiPolygonsWithVersion({ type: 'FeatureCollection', features: [] });
+    }, [setLandCoverAiPolygonsWithVersion]);
+
+    const handleClassifyApprovedAIPolygons = useCallback(
+        async (params: { classes: LandCoverClassDef[]; persist: boolean }) => {
+            if (!activeAoi) {
+                showNotification('Defina a AOI antes da classificacao por poligono.', 'error');
+                return undefined;
+            }
+            if ((landCoverAiStatsByStatus.approved + landCoverAiStatsByStatus.edited) <= 0) {
+                showNotification('Aprove ou edite poligonos antes de classificar.', 'error');
+                return undefined;
+            }
+            try {
+                setLandCoverAiClassifyLoading(true);
+                const response = await classifyLandCoverPolygons({
+                    polygons: landCoverAiPolygons,
+                    dateStart: dateFrom,
+                    dateEnd: dateTo,
+                    vectorizationId: landCoverAiVectorizationId || undefined,
+                    aoiGeometry: activeAoi.geometry,
+                    classes: params.classes,
+                    onlyStatuses: ['approved', 'edited'],
+                    persist: params.persist,
+                });
+                const normalized = normalizeAIPolygonCollection(response.polygons);
+                setLandCoverResult(response);
+                setLandCoverLayerUrl(response.tile_url);
+                setLandCoverLayerVisible(true);
+                setLandCoverBaseClassificationId(response.classification_id);
+                setLandCoverAiPolygonsWithVersion(normalized);
+                setLandCoverAiSelectedPolygonIds([]);
+                setLandCoverAiEditingPolygonId(null);
+                showNotification('Classificacao por poligono concluida com sucesso.', 'success');
+                return response;
+            } catch (error: any) {
+                showNotification(error.message || 'Falha ao classificar poligonos aprovados.', 'error');
+                return undefined;
+            } finally {
+                setLandCoverAiClassifyLoading(false);
+            }
+        },
+        [
+            activeAoi,
+            dateFrom,
+            dateTo,
+            landCoverAiPolygons,
+            landCoverAiStatsByStatus.approved,
+            landCoverAiStatsByStatus.edited,
+            landCoverAiVectorizationId,
+            normalizeAIPolygonCollection,
+            setLandCoverAiPolygonsWithVersion,
+            showNotification,
+        ]
+    );
     
     const handleCarouselSelect = useCallback((id: string) => {
         if (id === CHANGE_LAYER_ID) {
@@ -858,6 +1261,7 @@ export default function MainApplication() {
         setTimelineIndex(0);
         setTimelinePlaying(false);
         setLandCoverTrainingSamples({ type: 'FeatureCollection', features: [] });
+        setLandCoverTrainingSamplesClearVersion((prev) => prev + 1);
         setLandCoverDrawingEnabled(false);
         setLandCoverLayerVisible(true);
         setLandCoverRefinementMode(false);
@@ -891,8 +1295,8 @@ const handleCancelCreation = useCallback(() => {
     setSelectedProperty(null);
 }, []);
 
-const handleSelectProperty = useCallback((property: Property) => {
-    setSelectedProperty(property);
+const handleSelectProperty = useCallback((propertyId: string) => {
+    setSelectedProperty({ id: propertyId, propriedade_nome: `Propriedade ${propertyId}` });
     setIsCreatingProperty(false);
     setIsReadOnly(true);
 }, []);
@@ -914,12 +1318,16 @@ const handleSubmitProperty = useCallback(() => {
             if (!mapElement) return null;
 
             const html2canvas = await loadHtml2Canvas();
+            const captureCanvas = document.createElement('canvas');
+            // Hint browser for repeated readback operations performed by html2canvas internals.
+            captureCanvas.getContext('2d', { willReadFrequently: true });
             const canvas = await html2canvas(mapElement, {
                 useCORS: true,
                 allowTaint: false,
                 backgroundColor: '#ffffff',
                 scale: 1,
                 logging: false,
+                canvas: captureCanvas,
             });
             return canvas.toDataURL('image/png', 0.92);
         } catch (error) {
@@ -1277,7 +1685,7 @@ const handleSubmitProperty = useCallback(() => {
           <img src="${logoUrl}" alt="Campos Conectados" />
           <div class="title-block">
             <h1>Relatorio Tecnico do Agronomo</h1>
-            <p class="subtitle">Campos Conectados · Smart Farm Monitoring</p>
+            <p class="subtitle">Campos Conectados Â· Smart Farm Monitoring</p>
           </div>
         </div>
         <div class="meta-wrap">
@@ -1344,6 +1752,9 @@ const handleSubmitProperty = useCallback(() => {
     const handleCloseSaviModal = useCallback(() => { setSaviResult(null); }, []);
     const handleCloseMsaviModal = useCallback(() => { setMsaviResult(null); }, []);
     const handleCloseNdreModal = useCallback(() => { setNdreResult(null); }, []);
+    const handleToggleSidebarCollapsed = useCallback(() => {
+        setIsSidebarCollapsed((prev) => !prev);
+    }, []);
 
     useEffect(() => {
         if (notification) { const timer = setTimeout(() => setNotification(null), 4000); return () => clearTimeout(timer); }
@@ -1365,12 +1776,20 @@ const handleSubmitProperty = useCallback(() => {
     }, []);
 
     useEffect(() => {
+        if (typeof window === 'undefined') return;
+        window.localStorage.setItem(
+            SIDEBAR_COLLAPSED_STORAGE_KEY,
+            isSidebarCollapsed ? '1' : '0',
+        );
+    }, [isSidebarCollapsed]);
+
+    useEffect(() => {
         if (activeModule !== 'territorial' || mapMode !== '2d') return;
         const rafId = window.requestAnimationFrame(() => {
             window.dispatchEvent(new Event('resize'));
         });
         return () => window.cancelAnimationFrame(rafId);
-    }, [activeModule, isDesktopLayout, mapMode, sidebarWidth]);
+    }, [activeModule, isDesktopLayout, isSidebarActuallyCollapsed, mapMode, sidebarWidth]);
 
     let activeLayerId = null;
     if (isChangeLayerVisible) {
@@ -1398,68 +1817,115 @@ const handleSubmitProperty = useCallback(() => {
                 <div className="main-view">
                     {activeModule === 'territorial' ? (
                         <div
-                            className="resizable-sidebar-shell"
-                            style={isDesktopLayout ? { width: `${sidebarWidth}px` } : undefined}
+                            className={`resizable-sidebar-shell ${isSidebarActuallyCollapsed ? 'is-collapsed' : ''}`}
+                            style={
+                                isDesktopLayout
+                                    ? {
+                                          width: `${
+                                              isSidebarActuallyCollapsed
+                                                  ? COLLAPSED_SIDEBAR_WIDTH
+                                                  : sidebarWidth
+                                          }px`,
+                                      }
+                                    : undefined
+                            }
                         >
-                            <SidebarTerritorial
-                                dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
-                                cloudPct={cloudPct} onCloudPctChange={setCloudPct}
-                                satellite={satellite}
-                                onSatelliteChange={(value) => {
-                                    setSatellite(value);
-                                    if (value.startsWith('LANDSAT') && selectedIndices.includes('Red-Edge NDVI')) {
-                                        setSelectedIndices(prev => prev.filter(i => i !== 'Red-Edge NDVI'));
-                                    }
-                                }}
-                                satellites={SATELLITES} theme={theme} loadingState={loadingState}
-                                selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
-                                onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
-                                onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
-                                onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
-                                calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
-                                changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
-                                landCoverContent={
-                                    <LandCoverPanel
-                                        aoi={activeAoi}
-                                        dateStart={dateFrom}
-                                        dateEnd={dateTo}
-                                        onDateStartChange={setDateFrom}
-                                        onDateEndChange={setDateTo}
-                                        trainingSamples={landCoverTrainingSamples}
-                                        onTrainingSamplesChange={setLandCoverTrainingSamples}
-                                        drawingEnabled={landCoverDrawingEnabled}
-                                        onToggleDrawing={() => setLandCoverDrawingEnabled((prev) => !prev)}
-                                        selectedClassId={landCoverSelectedClassId}
-                                        onSelectedClassIdChange={setLandCoverSelectedClassId}
-                                        onResult={handleLandCoverResult}
-                                        onToggleLayerVisible={() => setLandCoverLayerVisible((prev) => !prev)}
-                                        layerVisible={landCoverLayerVisible}
-                                        loading={loadingState !== 'idle' || landCoverLoading}
-                                        onLoadingChange={setLandCoverLoading}
-                                        refinementMode={landCoverRefinementMode}
-                                        hasBaseClassification={Boolean(landCoverBaseClassificationId)}
-                                        refinementZoneReady={Boolean(landCoverRefinementPolygon)}
-                                        refinementSampleCount={landCoverRefinementSamples.features.length}
-                                        onToggleRefinementMode={() =>
-                                            setLandCoverRefinementMode((prev) => {
-                                                const next = !prev;
-                                                if (!next) {
-                                                    setLandCoverDrawingRefinementZone(false);
-                                                }
-                                                return next;
-                                            })
-                                        }
-                                        onDrawRefinementZone={() => setLandCoverDrawingRefinementZone(true)}
-                                        onApplyRefinement={handleApplyRefinement}
-                                        onClearRefinement={() => {
-                                            setLandCoverRefinementPolygon(null);
-                                            setLandCoverRefinementSamples({ type: 'FeatureCollection', features: [] });
-                                            setLandCoverDrawingRefinementZone(false);
-                                        }}
-                                    />
-                                }
-                            />
                             {isDesktopLayout && (
+                                <button
+                                    type="button"
+                                    className={`sidebar-collapse-toggle ${isSidebarActuallyCollapsed ? 'is-collapsed' : ''}`}
+                                    onClick={handleToggleSidebarCollapsed}
+                                    title={isSidebarActuallyCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+                                    aria-label={isSidebarActuallyCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+                                >
+                                    {isSidebarActuallyCollapsed ? '>' : '<'}
+                                </button>
+                            )}
+                            {!isSidebarActuallyCollapsed && (
+                                <SidebarTerritorial
+                                    dateFrom={dateFrom} onDateFromChange={setDateFrom} dateTo={dateTo} onDateToChange={setDateTo}
+                                    cloudPct={cloudPct} onCloudPctChange={setCloudPct}
+                                    satellite={satellite}
+                                    onSatelliteChange={(value) => {
+                                        setSatellite(value);
+                                        if (value.startsWith('LANDSAT') && selectedIndices.includes('Red-Edge NDVI')) {
+                                            setSelectedIndices(prev => prev.filter(i => i !== 'Red-Edge NDVI'));
+                                        }
+                                    }}
+                                    satellites={SATELLITES} theme={theme} loadingState={loadingState}
+                                    selectedImageIds={selectedImageIds} onDetectChange={handleDetectChange}
+                                    onBulkDownload={handleBulkDownload} onToggleTheme={handleToggleTheme}
+                                    onAoiFileUpload={handleAoiFileUpload} onDeleteAoi={handleDeleteAoi}
+                                    onCalculateIndices={handleCalculateIndices} selectedIndices={selectedIndices} onIndexChange={handleIndexChange}
+                                    calculatedIndices={calculatedIndices} onVisibleIndexChange={setVisibleLayerUrl}
+                                    changeThreshold={changeThreshold} onChangeThreshold={setChangeThreshold}
+                                    isToolsBarVisible={isToolsBarVisible}
+                                    onToggleToolsBarVisibility={() => setIsToolsBarVisible((prev) => !prev)}
+                                    landCoverContent={
+                                        <LandCoverPanel
+                                            aoi={activeAoi}
+                                            dateStart={dateFrom}
+                                            dateEnd={dateTo}
+                                            onDateStartChange={setDateFrom}
+                                            onDateEndChange={setDateTo}
+                                            trainingSamples={landCoverTrainingSamples}
+                                            onTrainingSamplesChange={handleLandCoverTrainingSamplesChange}
+                                            drawingEnabled={landCoverDrawingEnabled}
+                                            onToggleDrawing={() => setLandCoverDrawingEnabled((prev) => !prev)}
+                                            selectedClassId={landCoverSelectedClassId}
+                                            onSelectedClassIdChange={setLandCoverSelectedClassId}
+                                            onResult={handleLandCoverResult}
+                                            onToggleLayerVisible={() => setLandCoverLayerVisible((prev) => !prev)}
+                                            layerVisible={landCoverLayerVisible}
+                                            loading={loadingState !== 'idle' || landCoverLoading}
+                                            onLoadingChange={setLandCoverLoading}
+                                            refinementMode={landCoverRefinementMode}
+                                            hasBaseClassification={Boolean(landCoverBaseClassificationId)}
+                                            refinementZoneReady={Boolean(landCoverRefinementPolygon)}
+                                            refinementSampleCount={landCoverRefinementSamples.features.length}
+                                            onToggleRefinementMode={() =>
+                                                setLandCoverRefinementMode((prev) => {
+                                                    const next = !prev;
+                                                    if (!next) {
+                                                        setLandCoverDrawingRefinementZone(false);
+                                                    }
+                                                    return next;
+                                                })
+                                            }
+                                            onDrawRefinementZone={() => setLandCoverDrawingRefinementZone(true)}
+                                            onApplyRefinement={handleApplyRefinement}
+                                            onClearRefinement={handleClearRefinement}
+                                            advancedMode={landCoverAdvancedMode}
+                                            onAdvancedModeChange={(enabled) => {
+                                                setLandCoverAdvancedMode(enabled);
+                                                setLandCoverDrawingEnabled(false);
+                                                if (!enabled) {
+                                                    setLandCoverAiEditingPolygonId(null);
+                                                    setLandCoverAiSelectedPolygonIds([]);
+                                                }
+                                            }}
+                                            aiVisibleStatuses={landCoverAiVisibleStatuses}
+                                            onAiVisibleStatusesChange={setLandCoverAiVisibleStatuses}
+                                            aiTotalPolygons={landCoverAiPolygons.features.length}
+                                            aiSelectedPolygons={landCoverAiSelectedPolygonIds.length}
+                                            aiStatsByStatus={landCoverAiStatsByStatus}
+                                            aiVectorizationSummary={landCoverAiVectorizationSummary}
+                                            aiVectorizationLoading={landCoverAiVectorizeLoading}
+                                            aiClassifyingLoading={landCoverAiClassifyLoading}
+                                            aiEditingEnabled={Boolean(landCoverAiEditingPolygonId)}
+                                            onGenerateAIVectorization={handleGenerateAIVectorization}
+                                            onAiApproveSelected={handleApproveSelectedAIPolygons}
+                                            onAiRejectSelected={handleRejectSelectedAIPolygons}
+                                            onAiDeleteSelected={handleDeleteSelectedAIPolygons}
+                                            onAiMergeSelected={handleMergeSelectedAIPolygons}
+                                            onAiToggleEditSelected={handleToggleEditSelectedAIPolygon}
+                                            onAiReset={handleResetAIVectorization}
+                                            onAiClassifyApproved={handleClassifyApprovedAIPolygons}
+                                        />
+                                    }
+                                />
+                            )}
+                            {isDesktopLayout && !isSidebarActuallyCollapsed && (
                                 <SidebarResizeHandle
                                     onPointerDown={handleSidebarResizeStart}
                                     isResizing={isSidebarResizing}
@@ -1516,14 +1982,23 @@ const handleSubmitProperty = useCallback(() => {
                                     ],
                                 }}
                                 landCoverDrawingEnabled={landCoverDrawingEnabled}
+                                landCoverTrainingSamplesClearVersion={landCoverTrainingSamplesClearVersion}
+                                landCoverRefinementMode={landCoverRefinementMode}
                                 landCoverSelectedClassId={landCoverSelectedClassId}
                                 onLandCoverSampleDrawComplete={handleLandCoverSampleDrawComplete}
                                 landCoverLayerVisible={landCoverLayerVisible}
                                 landCoverRefinementPolygon={landCoverRefinementPolygon}
                                 landCoverDrawingRefinementZone={landCoverDrawingRefinementZone}
+                                landCoverRefinementClearVersion={landCoverRefinementClearVersion}
                                 onLandCoverRefinementZoneDrawComplete={handleLandCoverRefinementZoneDrawComplete}
                                 onAoiDeleted={handleDeleteAoi}
                                 swipeCandidateLayers={selectedCarouselSwipeLayers}
+                                landCoverAiPolygons={landCoverAdvancedMode ? visibleLandCoverAiPolygons : null}
+                                landCoverAiPolygonsVersion={landCoverAiPolygonsVersion}
+                                landCoverAiSelectedPolygonIds={landCoverAiSelectedPolygonIds}
+                                onLandCoverAIPolygonSelect={handleSelectAIPolygon}
+                                landCoverAiEditingPolygonId={landCoverAiEditingPolygonId}
+                                onLandCoverAIPolygonGeometryEdit={handleAIPolygonGeometryEdit}
                             />
                         ) : (
                             <Globe3D
@@ -1534,6 +2009,12 @@ const handleSubmitProperty = useCallback(() => {
                                 ndviMeanFallback={ndvi3dMeanFallback}
                                 satellite={satellite}
                                 temporalImages={timelineImages.map((img) => ({ id: img.id, date: img.date }))}
+                                showToolsBar={isToolsBarVisible}
+                                differenceLayerUrl={differenceLayerUrl}
+                                showDifferenceLayer={isChangeLayerVisible && Boolean(differenceLayerUrl)}
+                                landCoverClassificationId={landCoverResult?.classification_id ?? null}
+                                landCoverLegend={landCoverResult?.legend ?? []}
+                                showLandCoverLayer={landCoverLayerVisible && Boolean(landCoverLayerUrl)}
                             />
                         )}
                         {activeModule === 'territorial' && mapMode === '2d' && carouselItems.length > 0 && isCarouselVisible && (
@@ -1648,3 +2129,4 @@ const handleSubmitProperty = useCallback(() => {
         </MapStateProvider>
     );
 }
+

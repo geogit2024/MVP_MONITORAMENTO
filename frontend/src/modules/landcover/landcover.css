@@ -23,6 +23,10 @@
   gap: 8px;
 }
 
+.landcover-wrap {
+  flex-wrap: wrap;
+}
+
 .landcover-helper {
   margin: 6px 0 8px;
   font-size: 12px;
@@ -98,4 +102,38 @@
   color: #ff8d8d;
   font-size: 12px;
   margin: 0 0 8px;
+}
+
+.landcover-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.landcover-grid-2 label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.landcover-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.landcover-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.landcover-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
 }

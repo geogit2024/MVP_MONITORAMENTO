@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
+﻿import React, { useState, useRef } from 'react';
 import { Feature } from 'geojson';
 import togeojson from '@mapbox/togeojson';
 import './ReservoirSidebar.css'; 
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// 1. ATUALIZAÇÃO: A interface de props agora inclui a função 'onReservoirSelect'
+// 1. ATUALIZAÃ‡ÃƒO: A interface de props agora inclui a funÃ§Ã£o 'onReservoirSelect'
 interface ReservoirSidebarProps {
     reservoirs: Feature[];
     onRefresh: () => void;
@@ -50,7 +50,7 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!kmlFile || !name) {
-            setError('Nome e arquivo KML são obrigatórios.');
+            setError('Nome e arquivo KML sÃ£o obrigatÃ³rios.');
             return;
         }
 
@@ -62,10 +62,10 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
             const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
             const geojson = togeojson.kml(dom);
             
-            const validFeature = geojson.features.find(f => f.geometry);
+            const validFeature = geojson.features.find((f: Feature) => f.geometry);
 
             if (!validFeature) {
-                throw new Error('Nenhuma geometria válida (ponto, linha ou polígono) foi encontrada no arquivo KML.');
+                throw new Error('Nenhuma geometria vÃ¡lida (ponto, linha ou polÃ­gono) foi encontrada no arquivo KML.');
             }
 
             const payload = {
@@ -82,10 +82,10 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
 
             if (!response.ok) {
                 const errData = await response.json();
-                throw new Error(errData.detail || 'Falha ao salvar reservatório.');
+                throw new Error(errData.detail || 'Falha ao salvar reservatÃ³rio.');
             }
             
-            alert('Reservatório salvo com sucesso!');
+            alert('ReservatÃ³rio salvo com sucesso!');
             resetForm();
             onRefresh(); 
 
@@ -98,18 +98,18 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
     };
 
     const handleDelete = async (id: number, name: string) => {
-        if (window.confirm(`Tem certeza que deseja excluir o reservatório "${name}"?`)) {
+        if (window.confirm(`Tem certeza que deseja excluir o reservatÃ³rio "${name}"?`)) {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/reservoirs/${id}`, {
                     method: 'DELETE',
                 });
 
                 if (!response.ok) {
-                    const errData = await response.json().catch(() => ({ detail: 'Falha ao excluir o reservatório.' }));
+                    const errData = await response.json().catch(() => ({ detail: 'Falha ao excluir o reservatÃ³rio.' }));
                     throw new Error(errData.detail);
                 }
                 
-                alert('Reservatório excluído com sucesso!');
+                alert('ReservatÃ³rio excluÃ­do com sucesso!');
                 onRefresh();
 
             } catch (err: any) {
@@ -122,8 +122,8 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
     return (
         <div className="reservoir-sidebar">
             <header>
-                <h2>Reservatórios</h2>
-                <p>Gerencie e cadastre novas áreas.</p>
+                <h2>ReservatÃ³rios</h2>
+                <p>Gerencie e cadastre novas Ã¡reas.</p>
             </header>
             
             <input
@@ -136,14 +136,14 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
 
             {isFormVisible ? (
                 <form onSubmit={handleSubmit} className="reservoir-form">
-                    <h3>Novo Reservatório</h3>
+                    <h3>Novo ReservatÃ³rio</h3>
                     <p>Arquivo: <strong>{kmlFile?.name}</strong></p>
                     <div className="form-group">
                         <label htmlFor="name">Nome</label>
                         <input id="name" type="text" value={name} onChange={e => setName(e.target.value)} required />
                     </div>
                     <div className="form-group">
-                        <label htmlFor="description">Descrição</label>
+                        <label htmlFor="description">DescriÃ§Ã£o</label>
                         <textarea id="description" value={description} onChange={e => setDescription(e.target.value)} />
                     </div>
                     
@@ -163,27 +163,27 @@ const ReservoirSidebar: React.FC<ReservoirSidebarProps> = ({ reservoirs, onRefre
             )}
 
             <div className="reservoir-list">
-                <h3>Lista de Reservatórios</h3>
+                <h3>Lista de ReservatÃ³rios</h3>
                 <ul>
                     {reservoirs.map(r => (
-                        // 2. ATUALIZAÇÃO: O <li> agora tem um evento de clique que chama a função do componente pai
+                        // 2. ATUALIZAÃ‡ÃƒO: O <li> agora tem um evento de clique que chama a funÃ§Ã£o do componente pai
                         <li key={r.properties?.id} onClick={() => onReservoirSelect(r)} title="Clique para ver no mapa">
                             <div className="reservoir-info">
                                 <strong>{r.properties?.name}</strong>
-                                <p>{r.properties?.description || 'Sem descrição'}</p>
+                                <p>{r.properties?.description || 'Sem descriÃ§Ã£o'}</p>
                             </div>
                             <button 
                                 className="delete-btn" 
-                                // 3. ATUALIZAÇÃO: Adicionado stopPropagation para evitar que o clique no botão
-                                // também acione o clique na <li>
+                                // 3. ATUALIZAÃ‡ÃƒO: Adicionado stopPropagation para evitar que o clique no botÃ£o
+                                // tambÃ©m acione o clique na <li>
                                 onClick={(e) => { e.stopPropagation(); handleDelete(r.properties?.id, r.properties?.name); }}
-                                title="Excluir reservatório"
+                                title="Excluir reservatÃ³rio"
                             >
                                 &#x1F5D1;
                             </button>
                         </li>
                     ))}
-                    {reservoirs.length === 0 && <p className="empty-list">Nenhum reservatório cadastrado.</p>}
+                    {reservoirs.length === 0 && <p className="empty-list">Nenhum reservatÃ³rio cadastrado.</p>}
                 </ul>
             </div>
         </div>

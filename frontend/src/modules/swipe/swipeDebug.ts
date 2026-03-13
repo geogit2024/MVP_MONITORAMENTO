@@ -8,26 +8,22 @@ type SwipeTraceEntry = {
 declare global {
   interface Window {
     __SWIPE_DEBUG__?: boolean;
+    __SWIPE_DEBUG_CONSOLE__?: boolean;
     __SWIPE_TRACE__?: SwipeTraceEntry[];
   }
 }
 
 const SWIPE_DEBUG_STORAGE_KEY = 'app.swipe.debug';
-const MAX_TRACE_ENTRIES = 500;
-
-const isDev = () => {
-  try {
-    return Boolean(import.meta.env.DEV);
-  } catch {
-    return false;
-  }
-};
+const MAX_TRACE_ENTRIES = 120;
+const MAX_STRING_LENGTH = 512;
+const MAX_ARRAY_ITEMS = 24;
+const MAX_OBJECT_KEYS = 24;
+const MAX_DEPTH = 3;
 
 export const isSwipeDebugEnabled = () => {
   if (typeof window === 'undefined') return false;
   if (window.__SWIPE_DEBUG__ === true) return true;
-  if (window.localStorage.getItem(SWIPE_DEBUG_STORAGE_KEY) === '1') return true;
-  return isDev();
+  return window.localStorage.getItem(SWIPE_DEBUG_STORAGE_KEY) === '1';
 };
 
 const pushTrace = (entry: SwipeTraceEntry) => {
@@ -39,35 +35,72 @@ const pushTrace = (entry: SwipeTraceEntry) => {
   }
 };
 
+const truncateString = (value: string) =>
+  value.length <= MAX_STRING_LENGTH ? value : `${value.slice(0, MAX_STRING_LENGTH)}...<truncated:${value.length}>`;
+
+const sanitizePayload = (value: unknown, depth = 0): unknown => {
+  if (value == null) return value;
+  if (depth >= MAX_DEPTH) return '<max-depth>';
+  if (typeof value === 'string') return truncateString(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    const sliced = value.slice(0, MAX_ARRAY_ITEMS).map((item) => sanitizePayload(item, depth + 1));
+    if (value.length > MAX_ARRAY_ITEMS) {
+      sliced.push(`<truncated:${value.length - MAX_ARRAY_ITEMS}>`);
+    }
+    return sliced;
+  }
+  if (typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const keys = Object.keys(source);
+    const selected = keys.slice(0, MAX_OBJECT_KEYS);
+    const out: Record<string, unknown> = {};
+    selected.forEach((key) => {
+      out[key] = sanitizePayload(source[key], depth + 1);
+    });
+    if (keys.length > MAX_OBJECT_KEYS) {
+      out.__truncated_keys__ = keys.length - MAX_OBJECT_KEYS;
+    }
+    return out;
+  }
+  return String(value);
+};
+
 export const swipeDebug = (scope: string, event: string, payload?: unknown) => {
   if (!isSwipeDebugEnabled()) return;
+  const safePayload = typeof payload === 'undefined' ? undefined : sanitizePayload(payload);
   const entry: SwipeTraceEntry = {
     ts: new Date().toISOString(),
     scope,
     event,
-    payload,
+    payload: safePayload,
   };
   pushTrace(entry);
-  if (typeof payload === 'undefined') {
+  // Console output is opt-in to avoid flooding DevTools with large debug streams.
+  if (typeof window !== 'undefined' && window.__SWIPE_DEBUG_CONSOLE__ !== true) return;
+  if (typeof safePayload === 'undefined') {
     console.debug(`[SWIPE][${scope}] ${event}`);
     return;
   }
-  console.debug(`[SWIPE][${scope}] ${event}`, payload);
+  console.debug(`[SWIPE][${scope}] ${event}`, safePayload);
 };
 
 export const swipeDebugWarn = (scope: string, event: string, payload?: unknown) => {
   if (!isSwipeDebugEnabled()) return;
+  const safePayload = typeof payload === 'undefined' ? undefined : sanitizePayload(payload);
   const entry: SwipeTraceEntry = {
     ts: new Date().toISOString(),
     scope,
     event: `WARN:${event}`,
-    payload,
+    payload: safePayload,
   };
   pushTrace(entry);
-  if (typeof payload === 'undefined') {
+  // Console output is opt-in to avoid flooding DevTools with large debug streams.
+  if (typeof window !== 'undefined' && window.__SWIPE_DEBUG_CONSOLE__ !== true) return;
+  if (typeof safePayload === 'undefined') {
     console.warn(`[SWIPE][${scope}] ${event}`);
     return;
   }
-  console.warn(`[SWIPE][${scope}] ${event}`, payload);
+  console.warn(`[SWIPE][${scope}] ${event}`, safePayload);
 };
-

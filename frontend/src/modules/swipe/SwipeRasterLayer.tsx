@@ -1,6 +1,5 @@
-import { useEffect, useRef } from 'react';
+﻿import { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
-// @ts-expect-error - project currently has no @types/leaflet installed
 import L from 'leaflet';
 import type { SwipeLayerDescriptor } from './types';
 import { swipeDebug, swipeDebugWarn } from './swipeDebug';
@@ -37,6 +36,10 @@ export default function SwipeRasterLayer({
 
     let isDisposed = false;
     let layer: L.Layer | null = null;
+    let tileErrorCount = 0;
+    let hasLoadedAnyTile = false;
+    let retryScheduled = false;
+    const maxTileErrorsBeforeDisable = 12;
 
     const mountLayer = () => {
       if (isDisposed) return;
@@ -149,7 +152,10 @@ export default function SwipeRasterLayer({
 
       if (descriptor.kind === 'tile') {
         const tileLayer = layer as L.TileLayer;
-        tileLayer.once('load', () => {
+        const onTileLoad = () => {
+          hasLoadedAnyTile = true;
+          tileErrorCount = 0;
+          retryScheduled = false;
           const container = tileLayer.getContainer();
           swipeDebug('SwipeRasterLayer', 'layer:tile:load', {
             id: descriptor.id,
@@ -157,16 +163,52 @@ export default function SwipeRasterLayer({
             tileCount: container?.querySelectorAll('.leaflet-tile').length ?? null,
             paneName: paneName ?? null,
           });
-        });
-        tileLayer.on('tileerror', (event: any) => {
-          swipeDebugWarn('SwipeRasterLayer', 'layer:tile:error', {
+        };
+        const onTileError = (event: any) => {
+          tileErrorCount += 1;
+          const message = String(event?.error?.message || 'falha ao carregar tile');
+          if (!retryScheduled && tileErrorCount <= 2) {
+            retryScheduled = true;
+            window.setTimeout(() => {
+              if (isDisposed) return;
+              retryScheduled = false;
+              tileLayer.redraw();
+            }, 450);
+          }
+          if (tileErrorCount < maxTileErrorsBeforeDisable || hasLoadedAnyTile) {
+            if (tileErrorCount === 1 || tileErrorCount % 5 === 0) {
+              swipeDebugWarn('SwipeRasterLayer', 'layer:tile:error', {
+                id: descriptor.id,
+                paneName: paneName ?? null,
+                url: descriptor.url,
+                tile: event?.tile?.src ?? null,
+                coords: event?.coords ?? null,
+                message,
+                errorCount: tileErrorCount,
+              });
+            }
+            return;
+          }
+          swipeDebugWarn('SwipeRasterLayer', 'layer:tile:fatal', {
             id: descriptor.id,
             paneName: paneName ?? null,
             url: descriptor.url,
-            tile: event?.tile?.src ?? null,
-            coords: event?.coords ?? null,
-            message: event?.error?.message ?? null,
+            message,
+            errorCount: tileErrorCount,
           });
+          if (map.hasLayer(tileLayer)) {
+            map.removeLayer(tileLayer);
+          }
+          if (layerRef.current === tileLayer) {
+            layerRef.current = null;
+            onLayerReady?.(null);
+          }
+        };
+        tileLayer.on('load', onTileLoad);
+        tileLayer.on('tileerror', onTileError);
+        tileLayer.once('remove', () => {
+          tileLayer.off('load', onTileLoad);
+          tileLayer.off('tileerror', onTileError);
         });
       } else {
         const imageLayer = layer as L.ImageOverlay;
@@ -214,3 +256,5 @@ export default function SwipeRasterLayer({
 
   return null;
 }
+
+

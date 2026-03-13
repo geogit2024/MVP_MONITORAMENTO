@@ -1,31 +1,21 @@
-import React, { useState, useCallback, useEffect } from 'react';
+﻿import React, { useState, useCallback } from 'react';
 import { Feature, FeatureCollection, Polygon, Geometry } from 'geojson';
 import L, { LatLngBoundsExpression } from 'leaflet';
+import * as turf from '@turf/turf';
+import togeojson from '@mapbox/togeojson';
+import JSZip from 'jszip';
 import MapView from '../components/MapView';
 import SidebarCadastro from '../components/SidebarCadastro';
 import PropertyForm from '../components/PropertyForm';
 import TalhaoForm from '../components/TalhaoForm';
-import togeojson from '@mapbox/togeojson';
-import JSZip from 'jszip';
+import type { Property } from '../types/property';
 import './PropertyRegistrationPage.css';
-import * as turf from '@turf/turf';
 
-export interface Property {
-  id: number;
-  propriedade_nome: string;
-  incra_codigo?: string;
-  municipio: string;
-  estado: string;
-  area_total: number;
-  proprietario_nome: string;
-  cpf_cnpj: string;
-  email: string;
-  matricula?: string;
-  ccir?: string;
-  geometry: Feature<Polygon>;
-  doc_identidade_path?: string;
-  doc_terra_path?: string;
-}
+const EMPTY_PROPERTY_FEATURE: Feature<Polygon> = {
+  type: 'Feature',
+  geometry: { type: 'Polygon', coordinates: [] },
+  properties: {},
+};
 
 const PropertyRegistrationPage = () => {
   const [isCreating, setIsCreating] = useState(false);
@@ -42,8 +32,6 @@ const PropertyRegistrationPage = () => {
   const [showTalhaoModal, setShowTalhaoModal] = useState(false);
   const [baseMapKey, setBaseMapKey] = useState('google_hybrid');
 
-  // CORREÇÃO 1: Envolver a função em useCallback para garantir que ela seja estável.
-  // Como ela só usa `setters` do useState, o array de dependências pode ser vazio.
   const clearSelectionAndCloseForm = useCallback(() => {
     setSelectedProperty(null);
     setNewGeometry(null);
@@ -59,13 +47,14 @@ const PropertyRegistrationPage = () => {
     setIsFormReadOnly(false);
   };
 
-  // CORREÇÃO 2: Adicionar 'clearSelectionAndCloseForm' ao array de dependências.
   const handleGeometryDefined = useCallback(async (geometry: Feature | null) => {
     if (!geometry) return;
+
     setIsCreating(false);
     setIsFetchingLocation(true);
     clearSelectionAndCloseForm();
     setNewGeometry(geometry);
+
     try {
       const areaInSquareMeters = turf.area(geometry);
       const areaInHectares = areaInSquareMeters / 10000;
@@ -77,16 +66,18 @@ const PropertyRegistrationPage = () => {
       const address = data.address;
       const municipio = address.city || address.town || address.village || 'Não encontrado';
       const estado = address.state || 'Não encontrado';
+
       setPrefilledData({
-        municipio: municipio,
-        estado: estado,
+        municipio,
+        estado,
         area_total: parseFloat(areaInHectares.toFixed(4)),
       });
+
       const bounds = L.geoJSON(geometry).getBounds();
       setMapViewTarget(bounds);
     } catch (error) {
-      console.error("Erro no preenchimento automático:", error);
-      alert("Não foi possível preencher os dados de localização automaticamente. Por favor, preencha manualmente.");
+      console.error('Erro no preenchimento automático:', error);
+      alert('Não foi possível preencher os dados de localização automaticamente. Por favor, preencha manualmente.');
       const areaInSquareMeters = turf.area(geometry);
       const areaInHectares = areaInSquareMeters / 10000;
       setPrefilledData({ area_total: parseFloat(areaInHectares.toFixed(4)) });
@@ -98,32 +89,40 @@ const PropertyRegistrationPage = () => {
   }, [clearSelectionAndCloseForm]);
 
   const handleSelectProperty = async (propertyId: number) => {
-    if (propertyId) {
-      setIsCreating(false);
-      setNewGeometry(null);
-      try {
-        const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`);
-        if (!response.ok) throw new Error("Falha ao buscar detalhes da propriedade.");
-        const fullPropertyDetails: Property = await response.json();
-        setSelectedProperty(fullPropertyDetails);
-        const featureGeo = fullPropertyDetails.geometry.type === "Feature" ? fullPropertyDetails.geometry : turf.feature(fullPropertyDetails.geometry as Geometry);
-        const bounds = L.geoJSON(featureGeo).getBounds();
-        setMapViewTarget(bounds);
-        setIsFormOpen(true);
-        setIsFormReadOnly(true);
-      } catch (error) {
-        console.error(error);
-        alert("Não foi possível carregar os detalhes da propriedade.");
-      }
-    } else {
+    if (!propertyId) {
       clearSelectionAndCloseForm();
+      return;
+    }
+
+    setIsCreating(false);
+    setNewGeometry(null);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`);
+      if (!response.ok) throw new Error('Falha ao buscar detalhes da propriedade.');
+
+      const fullPropertyDetails = await response.json() as Property;
+      const geometry = fullPropertyDetails.geometry;
+      if (!geometry) {
+        throw new Error('Geometria da propriedade não encontrada.');
+      }
+
+      setSelectedProperty(fullPropertyDetails);
+      const featureGeo = geometry.type === 'Feature' ? geometry : turf.feature(geometry as Geometry);
+      const bounds = L.geoJSON(featureGeo).getBounds();
+      setMapViewTarget(bounds);
+      setIsFormOpen(true);
+      setIsFormReadOnly(true);
+    } catch (error) {
+      console.error(error);
+      alert('Não foi possível carregar os detalhes da propriedade.');
     }
   };
 
   const handleFormSubmit = () => {
     clearSelectionAndCloseForm();
-    setRefreshTrigger(currentValue => currentValue + 1);
-    alert("Operação realizada com sucesso!");
+    setRefreshTrigger((currentValue) => currentValue + 1);
+    alert('Operação realizada com sucesso!');
   };
 
   const handleEditForm = () => {
@@ -131,24 +130,27 @@ const PropertyRegistrationPage = () => {
   };
 
   const handleDeleteProperty = async (propertyId: string) => {
-    if (!window.confirm("Tem certeza que deseja apagar esta propriedade? Esta ação é irreversível.")) return;
+    if (!window.confirm('Tem certeza que deseja apagar esta propriedade? Esta ação é irreversível.')) return;
+
     try {
       const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Falha ao apagar propriedade: ${response.statusText} - ${errorText}`);
       }
-      alert("Propriedade apagada com sucesso!");
+
+      alert('Propriedade apagada com sucesso!');
       clearSelectionAndCloseForm();
-      setRefreshTrigger(currentValue => currentValue + 1);
+      setRefreshTrigger((currentValue) => currentValue + 1);
     } catch (error: any) {
-      console.error("Erro ao apagar propriedade:", error);
-      alert(error.message || "Erro de conexão ao apagar propriedade.");
+      console.error('Erro ao apagar propriedade:', error);
+      alert(error.message || 'Erro de conexão ao apagar propriedade.');
     }
   };
 
   const handleAoiFileUpload = useCallback(async (file: File | null) => {
     if (!file) return;
+
     try {
       let kmlText = '';
       if (file.name.toLowerCase().endsWith('.kmz')) {
@@ -159,9 +161,13 @@ const PropertyRegistrationPage = () => {
       } else {
         kmlText = await file.text();
       }
+
       const dom = new DOMParser().parseFromString(kmlText, 'text/xml');
       const geojson = togeojson.kml(dom) as FeatureCollection;
-      const polygonFeature = geojson.features.find((f): f is Feature => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
+      const polygonFeature = geojson.features.find(
+        (f): f is Feature => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
+      );
+
       if (polygonFeature) {
         handleGeometryDefined(polygonFeature);
       } else {
@@ -184,22 +190,30 @@ const PropertyRegistrationPage = () => {
         onStartCreation={handleStartCreation}
         onCancelCreation={clearSelectionAndCloseForm}
         onAoiFileUpload={handleAoiFileUpload}
-        onSelectProperty={(property) => handleSelectProperty(Number(property.id))}
-        selectedPropertyId={selectedProperty?.id || null}
+        onSelectProperty={(property) => handleSelectProperty(Number(property?.id))}
+        selectedPropertyId={selectedProperty ? String(selectedProperty.id) : null}
         refreshTrigger={refreshTrigger}
       />
       <main className="main-content">
         {isFetchingLocation && <div className="loading-overlay"><span>Calculando área e buscando localização...</span></div>}
         <div className="full-page-map-container">
-          <MapView 
+          <MapView
             onDrawComplete={isCreating ? handleGeometryDefined : () => {}}
-            drawingEnabled={isCreating}
-            activeAoi={selectedProperty?.geometry || newGeometry}
+            visibleLayerUrl={null}
+            previewLayerUrl={null}
+            previewOverlay={null}
+            changePolygons={null}
+            activeAoi={(selectedProperty?.geometry as Feature | null) || newGeometry}
             mapViewTarget={mapViewTarget}
-            onPropertySelect={(id) => handleSelectProperty(id)}
+            onPropertySelect={(id) => handleSelectProperty(Number(id))}
             refreshTrigger={refreshTrigger}
             baseMapKey={baseMapKey}
             onBaseMapChange={setBaseMapKey}
+            differenceLayerUrl={null}
+            indexLayerZIndex={1}
+            differenceLayerZIndex={1}
+            previewLayerZIndex={1}
+            drawingEnabled={isCreating}
             isDrawingTalhao={isDrawingTalhao}
             onTalhaoDrawComplete={(geometry) => {
               const area = turf.area(geometry) / 10000;
@@ -208,6 +222,7 @@ const PropertyRegistrationPage = () => {
               setShowTalhaoModal(true);
               setIsDrawingTalhao(false);
             }}
+            onAoiDeleted={clearSelectionAndCloseForm}
           />
         </div>
       </main>
@@ -216,13 +231,13 @@ const PropertyRegistrationPage = () => {
         <aside className="form-sidebar-right">
           <PropertyForm
             key={selectedProperty?.id || 'new-property-form'}
-            geometry={newGeometry || selectedProperty?.geometry || { type: 'Feature', geometry: { type: 'Polygon', coordinates: [] } } as Feature<Polygon>}
+            geometry={newGeometry || selectedProperty?.geometry || EMPTY_PROPERTY_FEATURE}
             onSubmit={handleFormSubmit}
             onCancel={clearSelectionAndCloseForm}
-            initialData={selectedProperty ? selectedProperty : prefilledData as Property}
+            initialData={selectedProperty ?? (prefilledData as Property | null)}
             isReadOnly={isFormReadOnly}
             onEdit={handleEditForm}
-            onDelete={selectedProperty ? handleDeleteProperty : () => {}} 
+            onDelete={selectedProperty ? handleDeleteProperty : () => {}}
             onCadastrarTalhao={selectedProperty ? handleCadastrarTalhao : undefined}
           />
         </aside>
@@ -230,7 +245,7 @@ const PropertyRegistrationPage = () => {
 
       {showTalhaoModal && talhaoGeometry && selectedProperty && (
         <TalhaoForm
-          propertyId={selectedProperty.id} 
+          propertyId={Number(selectedProperty.id)}
           talhaoGeometry={talhaoGeometry}
           initialArea={talhaoGeometry.properties?.area_ha || undefined}
           onClose={() => setShowTalhaoModal(false)}

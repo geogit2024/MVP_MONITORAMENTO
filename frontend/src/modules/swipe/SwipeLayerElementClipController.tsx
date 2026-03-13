@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { useMap } from 'react-leaflet';
 import type { SwipeRevealSide } from './types';
 import { swipeDebug } from './swipeDebug';
@@ -109,9 +109,10 @@ export default function SwipeLayerElementClipController({
       map.off('resize', onMapChange);
       map.off('layeradd', onMapChange);
       map.off('layerremove', onMapChange);
-      clearPaneClip(map.getPane(paneName));
+      clearPaneClip(map.getPane(paneName) ?? null);
     };
   }, [dividerPercent, enabled, map, paneName, revealSide]);
 
   return null;
 }
+

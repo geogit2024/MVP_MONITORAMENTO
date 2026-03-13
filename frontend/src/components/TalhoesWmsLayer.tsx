@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+﻿import React, { useEffect, useRef } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
 
@@ -15,14 +15,14 @@ const TalhoesWmsLayer: React.FC<TalhoesWmsLayerProps> = ({ visible, zIndex = 490
   const wmsUrl = 'http://localhost:8080/geoserver/imagens_satelite/wms';
 
   useEffect(( ) => {
-    // Inicializa a camada WMS com as opções corretas
+    // Inicializa a camada WMS com as opÃ§Ãµes corretas
     if (!layerRef.current) {
       layerRef.current = L.tileLayer.wms(wmsUrl, {
         layers: 'imagens_satelite:talhoes', // Nome da camada no GeoServer
         format: 'image/png',
         transparent: true,
         version: '1.1.0',
-        srs: 'EPSG:4326',
+        crs: L.CRS.EPSG4326,
         zIndex: zIndex,
       });
     }
@@ -35,7 +35,7 @@ const TalhoesWmsLayer: React.FC<TalhoesWmsLayerProps> = ({ visible, zIndex = 490
     } else if (!visible && map.hasLayer(layer)) {
       map.removeLayer(layer);
     }
-  }, [visible, map, zIndex, wmsUrl]); // Adicionado wmsUrl às dependências
+  }, [visible, map, zIndex, wmsUrl]); // Adicionado wmsUrl Ã s dependÃªncias
 
   // Garante que a camada seja removida quando o componente for desmontado
   useEffect(() => {
@@ -47,7 +47,8 @@ const TalhoesWmsLayer: React.FC<TalhoesWmsLayerProps> = ({ visible, zIndex = 490
     };
   }, [map]);
 
-  return null; // Este componente não renderiza nenhum HTML diretamente
+  return null; // Este componente nÃ£o renderiza nenhum HTML diretamente
 };
 
 export default TalhoesWmsLayer;
+

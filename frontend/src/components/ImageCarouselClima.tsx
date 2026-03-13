@@ -1,14 +1,14 @@
-// src/components/ImageCarousel.tsx
+﻿// src/components/ImageCarousel.tsx
 
 import React from 'react';
-import { ImageInfo } from '../App'; // Importa a interface
+import type { ImageInfo } from '../types/image';
 import './ImageCarousel.css'; // Ficheiro de estilos para o carrossel
 
 interface ImageCarouselProps {
   images: ImageInfo[];
   selectedIds: string[];
   onSelect: (id: string) => void;
-  // ✅ NOVO: Prop para receber a ID da camada de resultado quando estiver visível
+  // âœ… NOVO: Prop para receber a ID da camada de resultado quando estiver visÃ­vel
   activeLayerId: string | null;
 }
 
@@ -17,8 +17,8 @@ const ImageCarousel: React.FC<ImageCarouselProps> = ({ images, selectedIds, onSe
     <div className="carousel-container">
       <div className="carousel-track">
         {images.map(image => {
-          // ✅ REVISÃO: Uma imagem é considerada "ativa" se estiver na lista de selecionadas
-          // OU se for a nossa camada de resultado visível.
+          // âœ… REVISÃƒO: Uma imagem Ã© considerada "ativa" se estiver na lista de selecionadas
+          // OU se for a nossa camada de resultado visÃ­vel.
           const isActive = selectedIds.includes(image.id) || activeLayerId === image.id;
           
           return (

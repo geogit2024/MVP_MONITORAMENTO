@@ -1,5 +1,4 @@
-// @ts-expect-error - project currently has no @types/leaflet installed
-import L from 'leaflet';
+﻿import L from 'leaflet';
 import { SwipeRevealSide } from './types';
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -49,3 +48,5 @@ export const clearSwipeClip = (element: HTMLElement | null) => {
   (element.style as CSSStyleDeclaration & { webkitClipPath?: string }).webkitClipPath = '';
   element.style.willChange = '';
 };
+
+

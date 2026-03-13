@@ -75,8 +75,12 @@ def test_create_ee_geometry_from_json_calls_ee_geometry(main_module, monkeypatch
 
     result = main_module.create_ee_geometry_from_json(payload)
 
-    assert result == {"wrapped": payload}
-    assert captured["data"] == payload
+    wrapped = result["wrapped"]
+    assert wrapped["type"] == "Polygon"
+    assert wrapped == captured["data"]
+
+    normalized_coords = [list(point) for point in wrapped["coordinates"][0]]
+    assert normalized_coords == payload["coordinates"][0]
 
 
 def test_get_image_bands_landsat_applies_optical_and_thermal_scaling(main_module):
@@ -203,3 +207,32 @@ def test_calculate_indices_gee_includes_red_edge_for_sentinel(main_module, monke
     )
 
     assert set(result.keys()) == {"NDVI", "Red-Edge NDVI"}
+
+
+def test_coerce_bbox_values_accepts_valid_bbox(main_module):
+    result = main_module._coerce_bbox_values([-48.0, -15.0, -47.5, -14.5])
+    assert result == [-48.0, -15.0, -47.5, -14.5]
+
+
+def test_coerce_bbox_values_rejects_inverted_bbox(main_module):
+    with pytest.raises(main_module.HTTPException) as exc:
+        main_module._coerce_bbox_values([-47.0, -15.0, -48.0, -14.5])
+    assert exc.value.status_code == 400
+    assert "bbox invalida" in str(exc.value.detail).lower()
+
+
+def test_parse_bbox_text_parses_csv(main_module):
+    result = main_module._parse_bbox_text("-48.0,-15.0,-47.5,-14.5")
+    assert result == [-48.0, -15.0, -47.5, -14.5]
+
+
+def test_ndvi_3d_class_metadata_matches_2d_palette(main_module):
+    metadata = main_module.NDVI_3D_CLASS_METADATA
+    assert metadata[1]["class_name"] == "Agua"
+    assert metadata[2]["class_name"] == "Solo Exposto"
+    assert metadata[3]["class_name"] == "Vegetacao Rala"
+    assert metadata[4]["class_name"] == "Vegetacao Densa"
+    assert metadata[1]["color"] == "#4287f5"
+    assert metadata[2]["color"] == "#d4a276"
+    assert metadata[3]["color"] == "#a6d96a"
+    assert metadata[4]["color"] == "#1a9641"

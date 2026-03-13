@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "seed:reservoir-mocks": "node scripts/seed-reservoir-monitoring-mocks.mjs"
+  },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.18.3",
     "@mapbox/togeojson": "^0.16.2",

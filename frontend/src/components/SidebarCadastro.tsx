@@ -1,15 +1,7 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './SidebarCadastro.css';
-
-
-interface Property {
-  id: string;
-  propriedade_nome: string;
-  proprietario_nome: string;
-  municipio: string;
-  estado: string;
-}
+import type { Property } from '../types/property';
 
 interface SidebarCadastroProps {
   isCreating: boolean;
@@ -17,8 +9,8 @@ interface SidebarCadastroProps {
   onCancelCreation: () => void;
   onAoiFileUpload: (file: File | null) => void;
   onSelectProperty: (property: Property | null) => void;
-  selectedPropertyId: string | null;
-  refreshTrigger: any;
+  selectedPropertyId: string | number | null;
+  refreshTrigger: unknown;
   setSelectedProperty?: (property: Property | null) => void;
   setIsReadOnly?: (readOnly: boolean) => void;
 }
@@ -54,7 +46,7 @@ const SidebarCadastro: React.FC<SidebarCadastroProps> = ({
       }));
       setProperties(propertyList);
     } catch (error) {
-      console.error("Erro ao buscar propriedades:", error);
+      console.error('Erro ao buscar propriedades:', error);
     } finally {
       setIsLoading(false);
     }
@@ -64,13 +56,14 @@ const SidebarCadastro: React.FC<SidebarCadastroProps> = ({
     fetchProperties();
   }, [refreshTrigger]);
 
-  const filteredProperties = properties.filter(prop =>
+  const filteredProperties = properties.filter((prop) =>
     prop.propriedade_nome.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleSelectProperty = (prop: Property) => {onSelectProperty(prop);
+  const handleSelectProperty = (prop: Property) => {
+    onSelectProperty(prop);
     if (typeof setSelectedProperty === 'function') setSelectedProperty(prop);
-    if (typeof setIsReadOnly === 'function') setIsReadOnly(false); // 🛠️ habilita edição
+    if (typeof setIsReadOnly === 'function') setIsReadOnly(false);
   };
 
   return (
@@ -102,10 +95,10 @@ const SidebarCadastro: React.FC<SidebarCadastroProps> = ({
             <p>Modo de desenho ativo. Defina os limites no mapa ou carregue um ficheiro.</p>
             <label className="file-upload-label">
               Carregar KML/KMZ
-              <input 
-                type="file" 
+              <input
+                type="file"
                 accept=".kml,.kmz"
-                onChange={(e) => onAoiFileUpload(e.target.files ? e.target.files[0] : null)} 
+                onChange={(e) => onAoiFileUpload(e.target.files ? e.target.files[0] : null)}
               />
             </label>
             <button onClick={onCancelCreation} className="button-secondary small-button">Cancelar</button>
@@ -116,10 +109,10 @@ const SidebarCadastro: React.FC<SidebarCadastroProps> = ({
           {isLoading ? (
             <div className="loading-state">Carregando propriedades...</div>
           ) : (
-            filteredProperties.map(prop => (
+            filteredProperties.map((prop) => (
               <div
                 key={prop.id}
-                className={`property-list-item ${selectedPropertyId === prop.id ? 'selected' : ''}`}
+                className={`property-list-item ${String(selectedPropertyId) === String(prop.id) ? 'selected' : ''}`}
                 onClick={() => handleSelectProperty(prop)}
                 tabIndex={0}
               >

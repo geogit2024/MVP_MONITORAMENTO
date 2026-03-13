@@ -1,23 +1,23 @@
-/* src/App.css */
+﻿/* src/App.css */
 
-/* --- VARIÁVEIS DE TEMA (TEMA ESCURO COMO PADRÃO) --- */
+/* --- VARIÃVEIS DE TEMA (TEMA ESCURO COMO PADRÃƒO) --- */
 :root {
   --background-primary: #181a1b; /* Fundo principal muito escuro */
-  --background-secondary: #2a2a2e; /* Fundo dos painéis (sidebar/header) */
-  --background-tertiary: #3b3b40; /* Cor de hover e elementos secundários */
+  --background-secondary: #2a2a2e; /* Fundo dos painÃ©is (sidebar/header) */
+  --background-tertiary: #3b3b40; /* Cor de hover e elementos secundÃ¡rios */
   --text-primary: #e8e6e3; /* Texto principal (branco suave) */
-  --text-secondary: #b0b0b0; /* Texto secundário (cinza claro) */
-  --border-color: #404040; /* Cor das bordas e divisórias */
+  --text-secondary: #b0b0b0; /* Texto secundÃ¡rio (cinza claro) */
+  --border-color: #404040; /* Cor das bordas e divisÃ³rias */
   --shadow-color: rgba(0, 0, 0, 0.5);
   --button-primary-bg: #e63946; /* Vermelho forte para destaque principal */
-  --button-secondary-bg: #4a4a4e; /* Cinza médio para botões secundários */
-  --button-danger-bg: #e63946; /* Vermelho forte também para perigo */
+  --button-secondary-bg: #4a4a4e; /* Cinza mÃ©dio para botÃµes secundÃ¡rios */
+  --button-danger-bg: #e63946; /* Vermelho forte tambÃ©m para perigo */
   --button-text-color: #ffffff;
   --button-disabled-bg: #3b3b40;
   --button-disabled-text: #8a8a8a;
 }
 
-/* --- ESTILOS GERAIS DA APLICAÇÃO --- */
+/* --- ESTILOS GERAIS DA APLICAÃ‡ÃƒO --- */
 body, #root {
   background-color: var(--background-primary);
   color: var(--text-primary);
@@ -28,7 +28,7 @@ body, #root {
   overflow: hidden;
 }
 
-/* --- LAYOUT PARA NAVEGAÇÃO SUPERIOR --- */
+/* --- LAYOUT PARA NAVEGAÃ‡ÃƒO SUPERIOR --- */
 .app-container {
   display: flex;
   flex-direction: column;
@@ -142,7 +142,8 @@ body, #root {
   left: 14px;
   top: 14px;
   z-index: 1200;
-  width: 280px;
+  width: 320px;
+  max-height: calc(100% - 28px);
   border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(20, 25, 35, 0.92);
   color: #f8fafc;
@@ -151,6 +152,17 @@ body, #root {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.split-compare-card::-webkit-scrollbar {
+  width: 8px;
+}
+
+.split-compare-card::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
 }
 
 .split-compare-card h4 {
@@ -205,6 +217,145 @@ body, #root {
   font-size: 0.75rem;
 }
 
+.split-divider {
+  height: 1px;
+  background: rgba(148, 163, 184, 0.25);
+  margin: 4px 0;
+}
+
+.split-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #dbeafe;
+  margin: 0;
+}
+
+.split-check input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.split-meta,
+.split-note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.split-note {
+  color: #a7f3d0;
+}
+
+.ndvi-3d-legend {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.ndvi-3d-legend h5 {
+  margin: 0 0 6px 0;
+  font-size: 0.78rem;
+  color: #dbeafe;
+}
+
+.ndvi-3d-legend ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ndvi-3d-legend li {
+  display: grid;
+  grid-template-columns: 16px 50px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: #e2e8f0;
+}
+
+.ndvi-3d-legend .swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(241, 245, 249, 0.4);
+}
+
+.ndvi-cell-card {
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.ndvi-cell-card h5 {
+  margin: 0 0 6px 0;
+  font-size: 0.8rem;
+}
+
+.ndvi-cell-card p {
+  margin: 0 0 4px 0;
+  font-size: 0.75rem;
+}
+
+.landuse-3d-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.landuse-3d-legend {
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.landuse-3d-legend h5 {
+  margin: 0 0 6px 0;
+  font-size: 0.78rem;
+  color: #dbeafe;
+}
+
+.landuse-3d-legend ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.landuse-3d-legend li {
+  display: grid;
+  grid-template-columns: 16px 1fr 45px;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: #e2e8f0;
+}
+
+.landuse-3d-legend .swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(241, 245, 249, 0.4);
+}
+
+.landuse-3d-legend .height {
+  text-align: right;
+  color: #93c5fd;
+}
+
+.landuse-cell-card h5 {
+  color: #bbf7d0;
+}
+
 .buildings-status {
   padding: 6px 8px;
   border-radius: 6px;
@@ -253,10 +404,10 @@ body, #root {
 /* --- ESTILOS DA SIDEBAR --- */
 .sidebar-container {
   width: 380px; 
-  /* A borda agora também usa rgba para um efeito mais suave */
+  /* A borda agora tambÃ©m usa rgba para um efeito mais suave */
   border-right: 1px solid rgba(255, 255, 255, 0.1); 
   
-  /* ✅ A MUDANÇA PRINCIPAL ESTÁ AQUI */
+  /* âœ… A MUDANÃ‡A PRINCIPAL ESTÃ AQUI */
   background-color: rgba(40, 40, 40, 0.85); /* Fundo escuro com 85% de opacidade */
   -webkit-backdrop-filter: blur(10px);      /* Efeito de vidro fosco */
   backdrop-filter: blur(10px);
@@ -275,11 +426,49 @@ body, #root {
   max-width: 100%;
 }
 
+.resizable-sidebar-shell.is-collapsed {
+  min-width: 44px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: rgba(40, 40, 40, 0.85);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
 .resizable-sidebar-shell > .sidebar-container {
   width: 100%;
   min-width: 0;
   max-width: none;
   height: 100%;
+}
+
+.sidebar-collapse-toggle {
+  position: absolute;
+  top: 12px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.95);
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1400;
+}
+
+.sidebar-collapse-toggle:hover {
+  filter: brightness(1.1);
+}
+
+.sidebar-collapse-toggle.is-collapsed {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .sidebar-resize-handle {
@@ -430,7 +619,7 @@ body.sidebar-resizing * {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 95%; /* Ocupa mais espaço em telas menores */
+  width: 95%; /* Ocupa mais espaÃ§o em telas menores */
   max-width: 1200px;
   background-color: rgba(20, 20, 25, 0.85);
   backdrop-filter: blur(5px);
@@ -507,17 +696,17 @@ body.sidebar-resizing * {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 
-/* --- ESTILOS DA PÁGINA DE CADASTRO DE PROPRIEDADE --- */
-./* ✅ VERSÃO CORRIGIDA */
+/* --- ESTILOS DA PÃGINA DE CADASTRO DE PROPRIEDADE --- */
+/* âœ… VERSÃƒO CORRIGIDA */
 .page-container {
-  /* Desacopla o layout do seu pai e o faz ocupar a área visível */
+  /* Desacopla o layout do seu pai e o faz ocupar a Ã¡rea visÃ­vel */
   position: absolute; 
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
 
-  /* Garante a barra de rolagem vertical apenas quando necessário */
+  /* Garante a barra de rolagem vertical apenas quando necessÃ¡rio */
   overflow-y: auto; 
   
   padding: 2rem;
@@ -555,7 +744,7 @@ body.sidebar-resizing * {
 .map-instructions p { margin: 0 0 1rem 0; max-width: 450px; }
 
 
-/* ✅ ALTERAÇÃO: ESTILOS RESPONSIVOS PARA ECRÃS PEQUENOS */
+/* âœ… ALTERAÃ‡ÃƒO: ESTILOS RESPONSIVOS PARA ECRÃƒS PEQUENOS */
 @media (max-width: 900px) {
   /* Altera o layout principal para uma coluna vertical */
   .main-view {
@@ -576,17 +765,17 @@ body.sidebar-resizing * {
     display: none;
   }
 
-  /* A sidebar agora ocupa a largura total e tem uma altura máxima */
+  /* A sidebar agora ocupa a largura total e tem uma altura mÃ¡xima */
   .sidebar-container {
     width: 100%;
     height: 45vh; /* Ocupa 45% da altura da tela */
-    max-height: 450px; /* Mas não mais que 400px */
+    max-height: 450px; /* Mas nÃ£o mais que 400px */
     border-right: none;
     border-bottom: 1px solid var(--border-color);
-    overflow-y: auto; /* Garante que o conteúdo da sidebar possa rolar */
+    overflow-y: auto; /* Garante que o conteÃºdo da sidebar possa rolar */
   }
 
-  /* O conteúdo principal (mapa) ocupa o espaço restante */
+  /* O conteÃºdo principal (mapa) ocupa o espaÃ§o restante */
   .main-content {
     height: 55vh;
   }
@@ -605,17 +794,22 @@ body.sidebar-resizing * {
     font-size: 0.9rem;
     padding: 10px 5px;
   }
+
+  .split-compare-card {
+    width: min(92vw, 340px);
+    max-height: 52vh;
+  }
 }
 /* ================================================================== */
 /* ESTILOS PARA O PAINEL FLUTUANTE DE RESULTADOS (Substituir os antigos)   */
 /* ================================================================== */
 
-/* Contêiner principal do painel, gerenciado por react-resizable */
+/* ContÃªiner principal do painel, gerenciado por react-resizable */
 .floating-panel-box {
   background-color: white;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   border-radius: 8px;
-  /* A posição 'absolute' é gerenciada pela biblioteca react-draggable */
+  /* A posiÃ§Ã£o 'absolute' Ã© gerenciada pela biblioteca react-draggable */
   z-index: 1010; /* Garante que fique acima do mapa, mas abaixo de outros pop-ups */
   color: #333;
   display: flex;
@@ -633,10 +827,10 @@ body.sidebar-resizing * {
   box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.75), 0 10px 26px rgba(0, 0, 0, 0.35);
 }
 
-/* Cabeçalho que servirá como alça para arrastar */
+/* CabeÃ§alho que servirÃ¡ como alÃ§a para arrastar */
 .panel-header {
   padding: 10px 15px;
-  cursor: move; /* O cursor do mouse mudará para 'mover' sobre esta área */
+  cursor: move; /* O cursor do mouse mudarÃ¡ para 'mover' sobre esta Ã¡rea */
   background-color: #f0f0f0;
   border-bottom: 1px solid #ddd;
   border-top-left-radius: 8px;
@@ -649,10 +843,10 @@ body.sidebar-resizing * {
 .panel-header h3 {
   margin: 0;
   font-size: 1.1rem;
-  user-select: none; /* Impede que o texto do título seja selecionado ao arrastar */
+  user-select: none; /* Impede que o texto do tÃ­tulo seja selecionado ao arrastar */
 }
 
-/* Botão de fechar no cabeçalho */
+/* BotÃ£o de fechar no cabeÃ§alho */
 .panel-close-button {
   background: none;
   border: none;
@@ -665,15 +859,15 @@ body.sidebar-resizing * {
   color: #000;
 }
 
-/* Corpo do painel com o conteúdo (gráfico e resumo) */
+/* Corpo do painel com o conteÃºdo (grÃ¡fico e resumo) */
 .panel-body {
   padding: 15px;
-  flex-grow: 1; /* Permite que o corpo cresça para preencher o espaço disponível */
-  overflow-y: auto; /* Adiciona rolagem vertical se o conteúdo for maior que o painel */
+  flex-grow: 1; /* Permite que o corpo cresÃ§a para preencher o espaÃ§o disponÃ­vel */
+  overflow-y: auto; /* Adiciona rolagem vertical se o conteÃºdo for maior que o painel */
   overflow-x: hidden;
 }
 
-/* --- Estilos obrigatórios para as alças de redimensionamento --- */
+/* --- Estilos obrigatÃ³rios para as alÃ§as de redimensionamento --- */
 .react-resizable-handle {
   position: absolute;
   width: 24px;
@@ -717,11 +911,11 @@ body.sidebar-resizing * {
 }
 
 .modal-body {
-  /* O corpo do modal pode ter estilos específicos se necessário */
+  /* O corpo do modal pode ter estilos especÃ­ficos se necessÃ¡rio */
 }
 
 .ndvi-chart-container {
-  /* Estilos para o container do gráfico, se necessário */
+  /* Estilos para o container do grÃ¡fico, se necessÃ¡rio */
 }
 
 .ndvi-details-list {
@@ -751,7 +945,8 @@ body.sidebar-resizing * {
   text-align: center;
 }
 .ndvi-chart-container {
-  max-width: 450px; /* Define a largura máxima do gráfico */
-  margin: 0 auto;   /* Centra o gráfico horizontalmente no modal */
-  position: relative; /* Necessário para o dimensionamento correto do canvas */
+  max-width: 450px; /* Define a largura mÃ¡xima do grÃ¡fico */
+  margin: 0 auto;   /* Centra o grÃ¡fico horizontalmente no modal */
+  position: relative; /* NecessÃ¡rio para o dimensionamento correto do canvas */
 }
+

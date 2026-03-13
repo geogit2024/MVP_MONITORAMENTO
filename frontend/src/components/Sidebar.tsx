@@ -36,6 +36,8 @@ interface SidebarProps {
   changeThreshold: number;
   onChangeThreshold: (value: number) => void;
   landCoverContent?: React.ReactNode;
+  isToolsBarVisible: boolean;
+  onToggleToolsBarVisibility: () => void;
 }
 
 // Componente principal, mantendo todos os props originais
@@ -45,7 +47,8 @@ export default function SidebarTerritorial({
   onDetectChange, onBulkDownload, onToggleTheme, onAoiFileUpload, onDeleteAoi,
   onCalculateIndices, selectedIndices, onIndexChange,
   calculatedIndices, onVisibleIndexChange,
-  changeThreshold, onChangeThreshold, landCoverContent
+  changeThreshold, onChangeThreshold, landCoverContent,
+  isToolsBarVisible, onToggleToolsBarVisibility
 }: SidebarProps) {
   
   // Estado original
@@ -73,6 +76,17 @@ export default function SidebarTerritorial({
             <legend>Área de Interesse (AOI)</legend>
             <label>Carregar KML/KMZ:<input type="file" accept=".kml,.kmz" onChange={e => onAoiFileUpload(e.target.files ? e.target.files[0] : null)}/></label>
             <button onClick={onDeleteAoi} disabled={isProcessing} className="button button-danger">Deletar AOI</button>
+          </fieldset>
+          <hr className="sidebar-divider"/>
+          <fieldset className="filter-group">
+            <legend>Ferramentas do Mapa</legend>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={onToggleToolsBarVisibility}
+            >
+              {isToolsBarVisible ? 'Ocultar Barra de Ferramentas' : 'Exibir Barra de Ferramentas'}
+            </button>
           </fieldset>
           <hr className="sidebar-divider"/>
           <fieldset disabled={isProcessing} className="filter-group">
