@@ -1,0 +1,17 @@
+node_modules/
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+saas_v2.db
+saas_database.db
+*.db
+.DS_Store
+.vite/
+dist/
+build/
